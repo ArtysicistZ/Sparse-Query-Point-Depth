@@ -1,0 +1,2175 @@
+                                         This paper has been accepted for publication by the ECCV 2024 workshop on
+                                         Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+                                             Recent Event Camera Innovations: A Survey
+
+                                             Bharatesh Chakravarthi1 , Aayush Atul Verma1 , Kostas Daniilidis2 ,
+                                                          Cornelia Fermuller3 , and Yezhou Yang1
+                                                           1
+                                                               Arizona State University, Tempe AZ 85281, USA
+                                                     2
+                                                           University of Pennsylvania, Philadelphia, PA 19104, USA
+arXiv:2408.13627v2 [cs.CV] 27 Aug 2024
+
+
+
+
+                                                         3
+                                                            University of Maryland, College Park, MD 20742, USA
+
+
+
+                                               Abstract. Event-based vision, inspired by the human visual system, of-
+                                               fers transformative capabilities such as low latency, high dynamic range,
+                                               and reduced power consumption. This paper presents a comprehensive
+                                               survey of event cameras, tracing their evolution over time. It introduces
+                                               the fundamental principles of event cameras, compares them with tra-
+                                               ditional frame cameras, and highlights their unique characteristics and
+                                               operational differences. The survey covers various event camera models
+                                               from leading manufacturers, key technological milestones, and influential
+                                               research contributions. It explores diverse application areas across differ-
+                                               ent domains and discusses essential real-world and synthetic datasets for
+                                               research advancement. Additionally, the role of event camera simulators
+                                               in testing and development is discussed. This survey aims to consolidate
+                                               the current state of event cameras and inspire further innovation in this
+                                               rapidly evolving field. To support the research community, a GitHub
+                                               page categorizes past and future research articles and consolidates valu-
+                                               able resources.
+
+                                               Keywords: Event cameras · Event-based vision · Neuromorphic vision ·
+                                               Dynamic vision sensors · Low latency · High dynamic range · Low power
+
+
+
+
+                                         1   Understanding Event-based Vision – An Introduction
+
+                                         Event-based vision represents a paradigm shift in visual sensing technology, in-
+                                         spired by the human visual system’s capability (thus also referred to as neuro-
+                                         morphic vision) to detect and respond to changes in the environment. Unlike tra-
+                                         ditional frame cameras, which capture static images at set intervals, event-based
+                                         vision utilizes event cameras to continuously monitor light intensity changes at
+                                         each pixel. These cameras produce “events” only when significant changes occur,
+                                         generating a dynamic data stream that reflects real-time scene dynamics. Event-
+                                         based vision mimics the asynchronous nature of human perception, where each
+                                         pixel independently detects and records changes. This approach provides excep-
+                                         tionally high temporal resolution, essential for accurately capturing fast-moving
+                                         objects and dynamic scenes without the motion blur typically associated with
+                                         frame cameras. By focusing solely on changes and excluding static information,
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+2       B. Chakravarthi et al.
+
+
+
+
+            Fig. 1: Publication Trends in Event-based Vision Research.
+
+
+
+event cameras manage data more efficiently, significantly reducing redundancy
+and bandwidth requirements.
+    The real-time capture and processing of events enable immediate responses
+to scene changes, making event-based vision particularly suitable for applications
+that require rapid decision-making. The technology’s focus on detecting changes
+on a logarithmic scale rather than absolute values allows it to handle a wide
+range of lighting conditions effectively, avoiding common issues like overexpo-
+sure or underexposure encountered with traditional systems. This adaptability
+is particularly valuable in environments with challenging lighting conditions in
+outdoor settings. Moreover, since event cameras process only the changes, they
+require less data bandwidth and computational power compared to traditional
+cameras. This efficiency results in significant energy savings, making event-based
+vision ideal for battery-powered devices and long-term monitoring applications.
+The asynchronous nature also facilitates efficient data handling and analysis,
+focusing exclusively on relevant changes and enabling faster more accurate pro-
+cessing.
+    The distinctive features of event cameras - low latency, high dynamic range,
+reduced power consumption, and efficient data handling have driven their adop-
+tion across various application domains, including object detection [72], moving
+object segmentation [167–169, 190], object tracking [211, 283], object classifica-
+tion [12, 235], gesture/action recognition [6, 46, 141], flow/depth/pose estimation
+[11,174,175,301,302], semantic segmentation [4,243], video deblurring [107,139],
+video generation [145,258], neural radiance fields (NERF) [119,217], visual odom-
+etry [25, 279, 298, 306], high-resolution video reconstruction [29, 249, 289] and
+motion capture [90, 166, 274].
+    This survey aims to provide researchers with a comprehensive understanding
+of the current state of event cameras. It offers a background on research trends
+to illustrate the increasing interest in this field (Sec. 2). The survey explains the
+workings of event cameras (Sec. 3) and contrasts them with traditional frame
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+                                                  Event Cameras: A Survey        3
+
+cameras (Sec. 4). It studies various event camera models from leading manufac-
+turers, providing a feature-wise comparison to aid in camera selection (Sec. 5).
+Key milestone works are overviewed to set the stage for future research direc-
+tions (Sec. 6). Additionally, the survey discusses the diverse application areas of
+event-based vision, presenting notable works across different domains (Sec. 7).
+An overview of crucial event-based datasets (Sec. 8) and simulators essential for
+advancing research and development is also included (Sec. 9).
+    The objective of this survey is to consolidate event-based vision systems
+resources, emphasizing technological advancements and practical applications
+while serving as a thorough guide to the field’s features and options. Comple-
+menting this survey is a GitHub resource page, which will be regularly updated
+to provide researchers with the latest developments in event-based vision, facil-
+itating informed decision-making and promoting ongoing innovation.
+
+
+2   The Rise of Event-based Vision: A Background
+
+The event-based vision research community has seen significant advancements
+in recent years, as evidenced by the growing number of published papers (see
+Fig. 1). Starting from a modest number in 2010, the field has expanded, peaking
+with a substantial increase in scholarly activity by 2023. This notable surge, par-
+ticularly from 2019 onwards, is attributed to the increased availability of event
+cameras from various vendors and the introduction of advanced event-based sim-
+ulators. Major computer vision conferences such as CVPR, ECCV, ICCV, and
+WACV have observed a significant rise in event-based vision research papers.
+For instance, the number of event-based vision papers presented at CVPR has
+grown markedly, from a few in 2018 to a considerable number in 2024. Spe-
+cialized workshops dedicated to event-based vision have further contributed to
+disseminating research in this area. This trend illustrates its expanding impact
+and increasing recognition within the broader computer vision community.
+    In the late 1990s and early 2000s, notable advancements in neuromorphic
+vision included the development of a neuromorphic sensor for robots [81], spiking
+neural controllers [57], biologically inspired vision sensors [237] and an open-
+source toolkit for neuromorphic vision [104]. Key works also featured a review of
+artificial human vision technologies [47], an embedded real-time tracking system
+[140] and a multichip system for spike-based processing [253]. Additionally, the
+frame-free dynamic digital vision was discussed [44], AER dynamic vision sensors
+were introduced for a balancing robot [38,39], a dynamic stereo-vision system was
+developed [225], and activity-driven sensors were introduced [43]. Notably, [19]
+organized a workshop on biologically motivated vision.
+    From the early 2010s to 2020, notable advancements included the explo-
+ration of asynchronous event-based binocular stereo-matching [216], embedded
+neuromorphic vision for humanoid robots [10], multi-kernel convolution proces-
+sor module [21], high-speed vision for microparticle tracking [181], temporally
+correlated features extraction [14, 137], and an algorithm for recognition [158].
+Researchers advanced techniques in event-based visual flow [11], SLAM [267]/
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+4       B. Chakravarthi et al.
+
+
+             Rod         Bipolar      Retinal ganglion                                    High Threshold
+     Eye                   cell             cell                                          Reference voltage
+             cell
+
+
+
+
+                                                         Light Intensity
+                                                                                          Low Threshold
+
+
+
+
+                                                   Event
+                                                   output
+    EVK 4      Light   Power
+                                   Comparator                              Event                   Time
+     HD        Input   amp I/P
+    Sensor                                                                 output
+                         (a)                                                        (b)
+
+Fig. 2: Working Mechanism of Event Cameras: (a) Independent pixel operation con-
+verting light into voltage signals for detecting intensity changes. (b) Event generation
+as a function of logarithmic light intensity over time.
+
+
+
+3D SLAM [266], a robotic goalie with rapid reaction times [42], and a review
+on retinomorphic sensors [199]. Additionally, a multi-kernel algorithm for high-
+speed visual features tracking [125], continuous-time trajectory estimation [173],
+lifetime estimation of events and visual tracking [172], stereo matching [56], and
+spiking neural network model of 3D perception [185] were explored during the
+mid-2010s. Innovations such as event-driven classifier [240], spatiotemporal filter
+for reducing noise [112], low-latency line tracking [54], graph-based object classi-
+fication [12], and gait recognition [262] emerged. The late 2010s saw comprehen-
+sive surveys on event-based vision [61] and neuromorphic vision for autonomous
+driving [28] along with spatiotemporal feature learning for neuromorphic vision
+sensing [13]. The rapid advent of event cameras and simulators in the early 2020s
+significantly impacted the field, leading to milestone achievements as discussed
+in Sec. 6.
+
+
+3    How Event Cameras Work: An Inside Look
+
+Event-based vision fundamentally differs from traditional frame-based vision in
+the way they process a scene. Inspired by the human retina, where the rod,
+bipolar, and retinal ganglion cells detect and transmit visual signals indepen-
+dently (see Fig. 2 (a)), the purpose of each pixel in the sensor is to capture
+any change in visual information of the scene asynchronously. This autonomous
+principle of the sensor leads to a unique and efficient way of processing visual
+data in real-time. The working mechanism of an event camera involves several
+key steps. Each pixel operates independently, continuously, and asynchronously
+processing incoming light. Light photons hitting photodiodes in each pixel are
+converted into electrical current and transformed into a voltage signal. This gen-
+erated voltage is compared to a reference voltage at each pixel continuously to
+detect logarithmic changes in light intensity.
+    As illustrated in Fig. 2 (b), every time the voltage difference exceeds a prede-
+fined threshold, an event ⟨x, y, p, t⟩ is triggered, recording the pixel coordinates
+(x, y), the time of change t, and the polarity p ∈ {−1, +1}, denoting an increase
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+                                                    Event Cameras: A Survey       5
+
+
+
+
+         Frame-based
+                                             Frame-based   Frame-based
+           Camera
+                                               Day-time     Night-time
+
+
+
+
+         Event-based
+           Camera                            Event-based   Event-based
+                                              Day-time      Night-time
+
+
+
+Fig. 3: Comparison of Frame vs. Event Cameras: The top row shows common issues like
+motion blur and visibility in frame-based images, while the bottom row shows event-
+based images with reduced motion blur and better visibility in challenging lighting.
+
+
+
+or decrease of light intensity. These events are output as they occur, reflecting
+the changes in the scene over time through a continuous data stream rather than
+a series of static frames. The stream can be visualized as a two-channel repre-
+sentation in a 3D space. Here, two dimensions constitute the spatial component
+capturing the location of the event in image coordinates and the third dimen-
+sion represents its temporal coordinates, indicating precisely when the event
+occurred. This spatial-temporal representation minimizes data redundancy and
+enables efficient processing of dynamic aspects of the scene through its sparse
+structure.
+
+
+4   Event Camera vs. Frame Camera: A Comparison
+
+Event cameras offer several advantages over traditional frame cameras due to
+their unique operating principles. Each pixel in an event camera records changes
+the moment they are detected, allowing for the capture of fast-moving objects
+and dynamic scenes, thus achieving high temporal resolution (>10, 000 fps). Mo-
+tion blur, a common issue in frame-based systems [40], occurs when objects move
+rapidly during the camera’s exposure time, causing them to appear smeared
+across the image. However, unlike frame cameras, where every pixel must wait
+for a global exposure time of the frame, event cameras respond immediately
+to changes in the scene. This immediate response helps event cameras demon-
+strate low latency and significantly reduce motion blur, as shown in Fig. 3. This
+capability is critical in applications requiring real-time monitoring and rapid
+response, such as robotics and autonomous driving [55, 187].
+    While modern frame cameras can achieve high frame rates, they come at the
+cost of large bandwidth and storage requirements, which can be limiting. By only
+recording changes in the scene, event cameras produce less data than traditional
+frame cameras. This reduction in data bandwidth makes event cameras ideal for
+applications with limited bandwidth or storage capacity. The focus on changes
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+6       B. Chakravarthi et al.
+
+rather than absolute light levels further ensures that only the relevant informa-
+tion is captured, reducing redundancy. These advantages are most important for
+embedded and edge device systems, which often have limited processing power,
+memory, and storage capabilities, and benefit greatly from efficient and reduced
+data output [75, 120, 134, 219, 238].
+    Furthermore, event cameras operate effectively across a wide range of light-
+ing conditions. Focusing on logarithmic changes in light intensity allows them
+to avoid issues like overexposure, underexposure, and sudden changes in lighting
+conditions that commonly affect traditional cameras. Event sensors’ high dy-
+namic range (>120 dB) far exceeds the dynamic range exhibited by high-quality
+frame cameras that do not exceed 95 dB [91]. This makes them suitable for en-
+vironments with challenging lighting (see Fig. 3), such as outdoor scenes with
+varying illumination. Their exceptional low light cutoff (0.08 Lux) has prompted
+further explorations in various low-light applications [159,278,288]. Overall, these
+advantages make event cameras a compelling choice for diverse applications.
+
+
+5   Event Camera Models: An Overview
+
+In 2017, pioneering works [6, 175] utilized early event cameras like the DVS
+128 [93] and DAVIS 240 [92], laying the groundwork for advanced applications
+in the field. Since then, event camera technology has advanced significantly, with
+prominent manufacturers such as iniVation [101], Prophesee [207], Lucid Vision
+Lab (TRT009S-EC, TRT003S-EC) [124], Celepixe (CeleX5-MIP, CeleX-V), and
+Insightness (SiliconEye Rino 3 EVK) [103] introducing innovative event camera
+models. Among these, iniVation and Prophesee have emerged as leaders, with
+models such as the DAVIS 346 [97], Prophesee EVK4 [203], and DAVIS 240 [92]
+gaining prominence in the research community. This section reviews various
+event cameras from iniVation and Prophesee.
+    iniVation is a leading company in neuromorphic vision systems, known for its
+bio-inspired technology that provides ultra-low latency, high dynamic range, and
+low power consumption. Their current product lineup includes the DVXplorer
+[98] with VGA resolution, 110 dB dynamic range, and 165 million events per
+second, the DVXplorer Lite [99] with QVGA resolution, 110 dB dynamic range,
+and 100 million events per second, the DAVIS 346 [97], a prototype offering
+concurrent QVGA+ resolution and up to 12 million events per second, and the
+DAVIS 346 AER [94], which provides both event and frame output with a 120 dB
+dynamic range. Moreoever, the DVXplorer S Duo [100] integrates an event-based
+sensor with a global-shutter color image sensor, powered by an Nvidia Jetson
+Nano SOM. Also, their Stereo Kit [102] includes two devices, lenses, tripods,
+and other accessories for advanced stereo vision exploration. Note that some
+earlier products, such as the DVXplorer Mini, DVS 240, DAVIS 240, eDVS,
+DVS 128, DVL-5000, have been discontinued by iniVation and are no longer
+available. Additionally, iniVation offers software solutions like DV [95] for user-
+friendly visualization, DV-Processing [96] for C++/Python-based processing, and
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+                                                                                                                             Event Cameras: A Survey                                        7
+
+Table 1: Comprehensive Comparison of Event Cameras Manufactured by iniVation.
+
+
+
+                                                     DVXplorer S Duo          DVXplorer Micro            DVXplorer        DVXplorer Lite            DAVIS346          DAVIS346 AER
+                         Spatial Resolution                 640 x 480           640 x 480                640 x 480              320 x 240            320 x 240              320 x 240
+     Event Output
+
+
+
+                         Temporal Resolution               65 - 200 µs         65 - 200 µs              65 - 200 µs            65 - 200 µs              1 µs                    1 µs
+                         Max Throughput                     30 MEPS            450 MEPS                 165 MEPS               100 MEPS              12 MEPS                12 MEPS
+                         Latency                              <1 ms               <1 ms                   <1 ms                  <1 ms                 <1 ms                  <1 ms
+                         Dynamic Range                  90 dB - 110 dB       90 dB - 110 dB          90 dB - 110 dB         90 dB - 110 dB            120 dB                  120 dB
+                         Contrast Sensitivity             13% - 27.5%         13% - 27.5%              13% - 27.5%            13% - 27.5%         14.3% - 22.5%           14.3% - 22.5%
+                         Pixel pitch                          9 µm                9 µm                     9 µm                  18 µm                18.5 µm                18.5 µm
+                         Spatial Resolution             1920 x 1080 HD               -                       -                      -                346 x 260              346 x 260
+     Frame Output
+
+
+
+
+                         Frame Rate                       Up to 30 fps               -                       -                      -              Up to 40 fps            Up to 40 fps
+                         Dynamic Range                       71.4 dB                 -                       -                      -                  55 dB                  55 dB
+                         FPN                                    -                    -                       -                      -                  4.2 %                   4.2 %
+                         Dark Signal                            -                    -                       -                      -               18000 e– /s            18000 e– /s
+                         Readout Noise                          -                    -                       -                      -                   55 e-                  55 e-
+                         Pixel Pitch                          3 µm                   -                       -                      -                 18.5 µm                18.5 µm
+                         Dimensions (H x W x D)           32 x 80 x 92       24 x 27.5 x 29.7          40 x 60 x 25           40 x 60 x 25          40 x 60 x 25          40 x 78.8 x 25
+     Device Attributes
+
+
+
+
+                         Lens mount                         S-mount             CS-mount                CS-mount               CS-mount              CS-mount               CS-mount
+                                                       2- side Whitworth
+                         Mounting options             1/4”- 20 female and 4x M2 mounting points                      4-side Whitworth 1/4”-20 female and M3 mounting points
+                                                      M3 mounting points
+                         Connectors                 USB 3.0 C, Mini HDMI USB 3.0 micro B port USB 3.0 micro B port USB 3.0 micro B port USB 3.0 micro B port USB 3.0 micro B port
+                         Case materials               Anodized aluminum     Engineering plastic    Anodized aluminum Engineering plastic Anodized aluminum             Anodized aluminum
+                         Weight (without lense)               220 g                16 g                    100 g                  75 g                 100 g                   120 g
+                         Power consumption                 7W – 12 W                                       <140 mA @ 5 VDC (USB)                                   <180 mA @ 5 VDC (USB)
+                         Sensor Technology                                                          90 nm BSI CIS                                                   0.18 µm 1P6M MIM CIS
+                         Sensor Supply voltage                                                  1.2 V, 1.8 V and 2.8 V                                                   1.8 V and 3.3 V
+                                                                                         6-axis IMU (Gyro + Accelerometer), up to 8 kHz sampling rate
+                            Other Features                      -                    -                         Supports multi-camera time synchronization                         -
+                                                      on-board processing
+                                                                                     -                       -                      -                     -                       -
+                                                     (Nvidia Jetson Nano)
+
+
+
+
+ROS integration, alongside a low-level library for event camera usage. Tab. 1
+summarizes the key characteristics and features of iniVation’s event cameras.
+
+
+Table 2: Comprehensive Comparison of Event Cameras Manufactured by Prophesee.
+
+
+
+                                                    EVK 4 HD                     EVK3                 EVK3 - HD             VisionCam EB            SilkyEvCam VGA SilkyEvCam HD
+                         Spatial Resolution          1280 x 720                  320 x 320              1280 x 720              640 x 480               640 x 480         1280 x 720
+                                                       1/2.5"                       1/5"                   1/5"                    3/4"                    3/4"             1/2.5"
+     Event Output
+
+
+
+
+                         Optical Format
+                         Max. Bandwidth               1.6 Gbps                        -                  1.6 Gbps                1 Gbps                      -                 -
+                         Typical Latency               220 µs                     <150 µs                 220 µs                  220 µs                  200 µs           <100 µs
+                         Dynamic Range                 >86 dB                    >120 dB                  >86 dB                >120 dB                 >120 dB            >120 dB
+                         Contrast Sensitivity            25%                        25%                     25%                    25%                     25%               25%
+                         Pixel Size                4.86 x 4.86 µm              6.3 x 6.3 µm           4.86 x 4.86 µm           15 x 15 µm              15 x 15 µm       4.86 x 4.86 µm
+                         Low light cutoff             0.08 lux                    0.05 lux               0.08 lux                0.08 lux                0.08 lux          0.08 lux
+                         Dimensions                                                                                            105 × 50 ×
+                                                    30 x 30 x 36              108 x 76 x 45           108 x 76 x 45                                    30 x 30 x 36       30 x 30 x 36
+                         (H x W x D) mm                                                                               (30 + lens tube 27 – 80 mm)
+     Device Attributes
+
+
+
+
+                         D-FoV                           47.7◦                     76◦                    81.5◦                      -                   70◦                47.7◦
+                         Lens Mount                 C/CS mount                M12 S-Mount           C/CS with S-mount           C-Mount               C/CS Mount         C/CS Mount
+                                                4x M2 front + 2x M2.6      Optical Flex module
+                         Mounting Options                                                             M12 S-Mount               6 × M4                M12 S-Mount        M12 S-Mount
+                                                  back fixing points         / COB module
+                                                                            USB 3.0 Micro-B
+                         Connectors               USB 3.0 Type-C                                     USB 3.0 Micro-B          M12 - 17 Pin           USB 3.0 Type-C     USB 3.0 Type-C
+                                                                                and SMA
+                         Case Material             Aluminum alloy              PCBs only                PCBs only                   -                Aluminum alloy     Aluminum alloy
+                         Weight                         40g                                                                180 g without lens           102.6 g             72.5 g
+                                                                                                      4.5W powered
+                         Power Consumption 0.5W powered via USB              powered via USB                                       -                USB Power (VBUS) USB Power (VBUS)
+                                                                                                         via USB
+                                                                         GenX320 CCAM5 module,                             PPS3MVCD                                       PPS3MVCD
+                         Sensor Tech                  IMX636                                             IMX636                                          IMX636
+                                                                         CM2 Flex Optical Module                       (Gen3.1 VGA sensor)                            (Gen3.1 VGA sensor)
+                                                                        Synchronization interface                               -                           -                  -
+                          Other Features                                                                                 Programable with
+                                                          -                         -                   -          dual-core ARM Cortex-A15 ,               -                  -
+                                                                                                                      1 × µSD Card ≥ 32 GB
+                                                                                      METAVISION Intelligence Suite - SDK support by PROPHESEE
+
+
+
+
+   Prophesee offers evaluation kits for exploring event-based vision, including
+USB cameras and embedded starter kits. USB cameras feature the Metavision
+EVK4-HD [203] with the IMX636 sensor (1280x720px) [208], providing high
+dynamic range (>120 dB) and low pixel latency (<100 µs), the Metavision
+EVK3- GENX320 with the GenX320 sensor (320x320px) [201], known for ultra-
+low power consumption (down to 36 µW) and high dynamic range (>120 dB),
+and the Metavision EVK3-HD [202] with the IMX636 sensor and USB 3.0 con-
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+8                 B. Chakravarthi et al.
+
+
+
+
+                                                                                         Eventnerf: Neural radiance fields
+    Amir, Arnon, et al.
+    A low power, fully event-                    Gehrig, Daniel, et al.                from a single colour event camera.
+                                                     Video to events:                                Rudnev, Viktor, et al.
+    based gesture recognition
+    system                                   Recycling video datasets                                                2023
+                                                   for event cameras
+                                                          2020                                                                    2024
+                                                                                                                              Wang, Xiao, et al.
+                                                                                                                                  Event stream-
+                                                                                                                                   based visual
+                                                                                                                                object tracking:
+         2017                    2018              2019                        2021                  2022                      A high-resolution
+                                                                         Tulyakov, Stepan,      Zhang, Jiqing, et al.               benchmark
+                                                                                      et al. Spiking transformers for             dataset and a
+                                                                          Time lens: Event-                                     novel baseline.
+                                                                                                  event-based single
+                                                                         based video frame
+          Maqueda, Ana I., et al.                                                                      object tracking
+                                               Zhu, Alex Zihao, et al         interpolation
+          Event-based vision meets             Unsupervised event-based
+          deep learning on steering            learning of optical flow,
+          prediction for self-driving cars     depth, and egomotion
+          DDD17
+
+
+
+
+                    Fig. 4: Key Milestone Papers and Works in Event-based Vision.
+
+
+
+nectivity. Embedded starter kits include the Metavision Starter Kit-AMD Kria
+KV260 [205], combining IMX636 [236] and GenX320 sensors for FPGA-based
+development, and the Metavision Starter Kit-STM32F7 [206] , optimized for
+the STM32-F7 MCU with the GenX320 sensor for low-power applications. The
+Metavision SDK [204] offers a comprehensive suite of tools, including visualiza-
+tion applications, programming guides, and APIs in C++ and Python for custom
+solution development and sample recordings. Tab. 2 summarizes the key char-
+acteristics and features of Prophesee’s event cameras.
+
+
+6       Pioneering Progress: Milestones in Event-based Vision
+
+In this section, significant milestone works in event-based vision from 2017 to
+2024 (July) are reviewed, highlighting key advancements that have shaped the
+field, as illustrated in Fig. 4. In 2017, [6] introduced a low-power, fully event-
+based gesture recognition system using the TrueNorth processor, achieving real-
+time accuracy with minimal power. [175] released a comprehensive dataset and
+simulator, combining global-shutter and event-based sensors to advance algo-
+rithms for robotics and vision applications. [129] developed the CIFAR10-DVS
+dataset, converting CIFAR-10 images into event streams, offering a valuable
+benchmark for event-driven object classification, utilizing a repeated closed-loop
+smooth (RCLS) movement of frame-based images.
+    In 2018, [161] enhanced steering prediction for self-driving cars by adapting
+deep neural networks for event data. [235] introduced HATS, a feature rep-
+resentation and machine learning architecture that improved object classifica-
+tion accuracy and released the first large real-world event-based dataset. [300]
+unveiled the multivehicle stereo event camera dataset (MVSEC), offering syn-
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+                                                 Event Cameras: A Survey        9
+
+chronized event streams and IMU data for 3D perception tasks. [212] developed
+ESIM, an open-source simulator for generating high-quality synthetic event data,
+while [301] also introduced EV-FlowNet, a self-supervised framework for optical
+flow estimation from event streams. In 2019, [302] proposed an unsupervised
+learning framework for predicting optical flow and depth from event streams us-
+ing discretized volume representation. [213] developed a method to reconstruct
+high-quality videos from event data with a recurrent neural network for object
+classification and visual-inertial odometry. [189] introduced the event-based dou-
+ble integral (EDI) model to generate sharp, high-frame-rate videos from a single
+blurry frame and event data, addressing motion blur. Additionally, [214] im-
+proved intensity image and color video reconstruction using a recurrent network
+trained on simulated data.
+    In 2020, [196] released a high-resolution (1Mpx) dataset and a recurrent ar-
+chitecture with temporal consistency loss, improving object detection. [68] con-
+verted conventional video datasets into synthetic event data for detection and
+segmentation tasks, enhancing model training, while [224] developed a neural
+network for fast and efficient image reconstruction from event data. In 2021, [71]
+introduced the high-resolution DSEC stereo dataset to improve autonomous
+driving under challenging lighting conditions. [85] developed the v2e toolbox
+for generating realistic synthetic DVS events from intensity frames, enhancing
+object detection, particularly at night. [251] proposed Time Lens, a frame in-
+terpolation method that improves image quality and handles dynamic scenar-
+ios. [298] presented an event-based stereo-visual odometry system with real-time
+robustness. [113] introduced the N-ImageNet dataset to support fine-grained
+object recognition with event cameras.
+    In 2022, [283] introduced STNet, a spiking transformer network for single-
+object tracking that combines global spatial and temporal cues for superior
+accuracy and speed. [241] developed EFNet, a two-stage restoration network
+utilizing cross-modal attention, setting new benchmarks in motion deblurring
+with the REBlur dataset. [222] proposed AEGNN, which reduce computational
+complexity and latency by processing events as sparse, evolving spatiotemporal
+graphs. [249] presented Time Lens++, enhancing frame interpolation with para-
+metric non-linear flow and multi-scale fusion. In 2023, [217] introduced Event-
+NeRF, which uses a single-color event stream to achieve dense 3D reconstructions
+with high-quality RGB renderings. [72] developed recurrent vision transformers
+(RVT), reaching state-of-the-art object detection performance with reduced in-
+ference time and parameter efficiency. [89] introduced Ev-NeRF, adapting neural
+radiance fields to event data for improved intensity image reconstruction under
+extreme conditions.
+    In 2024, [261] introduced high-resolution data and hierarchical knowledge
+distillation to enhance speed and accuracy in visual object tracking. [2] (SEVD)
+provided synthetic multi-view data for robust traffic participant detection, while
+[252] (eTraM) offered 10 hr of event-based traffic monitoring data, showcasing the
+effectiveness of event cameras in diverse scenarios. These milestones demonstrate
+the rapid progress and growing potential of event-based vision technologies.
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+10      B. Chakravarthi et al.
+
+
+
+
+               Detection &    Classification     Estimation        Stereo &         Segmentation     Fusion
+               Tracking       and                • Flow            Photometric      • Motion         • RGB – event
+                              Recognition                          Analysis
+               • Object                            estimation                         segmentation     fusion
+                 detection    • Object           • Motion          • Event stereo   • Object         • Lidar – event
+               • Key-point
+                                classification     estimation      • Photometric      segmentation     fusion
+                 detection    • Object           • Pose              stereo         • Segment        • Infrared –
+                                Recognition        estimation      • Shape from       anything         event fusion
+               • Object       • Gesture                              polarization     models
+                 tracking                        • Depth                                             • Multi – event
+                                recognition        estimation                                          vision
+               • Feature      • Action
+                 Tracking       recognition
+
+
+
+
+                     Image             Generation        Odometry &        Neural          Capture &         Learning &
+                     Processing &                        SLAM              Radiance        Re-               Reasoning
+                     Reconstruction    • Video
+                                         generation      • Visual          Fields          identification    • Conceptual
+                     •Video/Image      • Video             odometry        • Event NERF    • Motion            reasoning
+                     reconstruction      enhancement     • Visual SLAM     • Robust e-       capture         • Unpaired
+                     •Video frame      • Video to                                          • Gesture
+                     interpolation                       • Extended          NERF                              learning
+                                         events            Kalman Filter   • Dynamic         capture         • Unlabeled
+                     •Event            • Events to         pipeline          NERF          • Person/           learning
+                     denoising           video                                               Vehicle –
+                                                         • 3D SLAM         • Enhanced
+                     • Video/motion    • Video super-                        NERF            ReID
+                     deblurring          resolution
+
+
+
+
+Fig. 5: Showcasing Broad Applications and Notable Works in Event-based Vision Re-
+search.
+
+
+
+7    Event Cameras in Action: Diverse Tasks and Impacts
+Event-based vision is revolutionizing numerous fields by introducing new capa-
+bilities across a wide range of tasks, including detection, tracking, classification,
+recognition, and estimation. This section highlights key tasks, as illustrated in
+Fig. 5, and explores its significant impact across different application domains.
+In detection and tracking, event cameras with high temporal resolution and
+low latency have driven advancements in object detection, key-point detection,
+and tracking. Innovations such as scene-adaptive sparse transformers [194], spik-
+ing [283] and recurrent vision transformers [72], and self-supervised learning [66]
+have enhanced accuracy in these areas, benefiting applications in surveillance
+and autonomous driving [26]. In classification and recognition, event cameras
+have markedly improved object classification, gesture and gait recognition, and
+action recognition, particularly in dynamic or complex scenes. Their ability to
+capture detailed temporal information boosts object classification through his-
+tograms of averaged time surfaces [235] and space-time event clouds [260].
+    Furthermore, event cameras greatly enhance estimation tasks such as optical
+flow, motion/pose, and depth estimation. The high-speed and low-latency char-
+acteristics of event cameras allow for precise calculation of motion, orientation,
+and depth, which are essential for understanding scene dynamics and improving
+3D perception. Key advancements include progressive spatiotemporal alignment
+for motion estimation [86], globally optimal contrast maximization [142], and
+tangentially elongated Gaussian belief propagation for optical flow [226]. These
+developments are crucial for applications in robotics, augmented reality, and
+autonomous navigation. In stereo and photometric analysis, event-based vision
+supports advanced techniques like event stereo [32], photometric stereo [280],
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+                                                                                                      Event Cameras: A Survey                                 11
+
+ Table 3: Event-based Vision Applications with Related Notable Research Papers.
+
+                        Applications Taks                                        Related Papers
+                                         Object detection                  [2, 70, 72, 130, 164, 177, 194–196, 221, 223, 248, 252, 271, 292, 299, 309, 310]
+                          Detection
+                                         Key-point detection               [31, 66, 84, 87, 148, 160]
+                            and
+                                         Object tracking                   [8, 58, 230, 261, 283, 285, 304, 309]
+                          Tracking
+                                         Feature tracking                  [69, 74, 127, 132, 165, 228, 306]
+                                         Object classification             [45, 235]
+                        Classification Object recognition                  [22, 34, 113, 114, 133, 254, 277, 293, 309]
+                             and         Gesture recognition               [6, 260]
+                         Recognition Gait recognition                      [262]
+                                         Action recognition                [67, 197, 246, 295]
+                                         Optical flow estimation           [62, 63, 122, 126, 146, 154, 155, 188, 192, 198, 226, 232, 233, 255]
+                         Estimation      Motion/Pose estimation            [51, 64, 86, 105, 142, 143, 162, 180, 182, 183, 193, 215, 218, 307]
+                                         Depth estimation                  [36, 62, 179, 231, 282]
+                         Stereo and      Event stereo                      [7, 32, 149, 171, 179, 250, 263, 286, 297]
+                        Photometric Photometric stereo                     [280]
+                           Analysis      Shape from Polarization           [163, 176]
+  Event-based Vision
+
+
+
+
+                                         Semantic segmentation             [16, 109, 121, 243]
+                        Segmentation Motion/Object segmentation            [128, 168, 239, 298]
+                                         Segment Anything Models           [30]
+                                         Frame/RGB – Event                 [127, 186, 248, 249, 273, 284, 299]
+                            Fusion
+                                         Lidar/Infrared – Event            [18, 37, 73, 220, 245, 294]
+                                         Motion reconstruction             [106]
+                       Reconstruction Video reconstruction                 [53, 147, 213, 264, 268, 275, 303, 308]
+                             and         Image reconstruction/restoration [78, 134, 136, 151, 178, 191, 224, 259]
+                            Image        Video frame interpolation         [35, 82, 115, 123, 150, 186, 242, 249, 251, 269, 270, 276, 281, 289]
+                         Processing      Event denoising                   [3, 9, 48, 49, 76, 265, 287]
+                                         Motion/Video deblurring           [33, 52, 107, 116, 117, 139, 241, 272, 289, 290, 296]
+                                         Video generation/enhancement      [135, 256, 258, 305]
+                         Generation      Video to events                   [68, 291]
+                                         Video/Event Super-resolution      [79, 80, 88, 110, 131, 153]
+                          Odometry       Visual odometry                   [83, 143, 144, 170, 220, 311]
+                         and SLAM        SLAM                              [27, 65, 77, 108, 210]
+                            NERF         Neural Radiance Fields            [23, 89, 152, 157, 209, 217]
+                        Capture and Motion capture                         [166, 274]
+                       Re-Identification Person Re-ID                      [1, 24]
+                                         Conceptual reasoning              [295]
+                        Learning and
+                                         Unsupervised learning             [62, 118, 302]
+                          Reasoning
+                                         Unlabeled and unpaired event data [257]
+
+
+
+
+and shape from polarization [176], offering high-resolution depth maps and de-
+tailed surface properties. For segmentation tasks, including semantic segmenta-
+tion [243], motion/object segmentation [239], and segment anything models [30],
+event cameras excel in dynamic and high-speed scenes, enabling precise scene un-
+derstanding and object isolation. The fusion of event-based data with traditional
+frame-based [273], lidar, or infrared data [73, 294] further enhances applications
+such as environmental mapping by combining complementary information.
+    Event-based vision significantly advances reconstruction and image process-
+ing tasks, contributing to video reconstruction [268, 303], image reconstruc-
+tion [191, 259], video frame interpolation [150, 281], event denoising [9], and
+motion deblurring [33, 241]. In generation-related tasks, it aids in video gen-
+eration and enhancement [145, 258], video-to-events conversion [68], and super-
+resolution [88, 153], facilitating high-quality content creation and analysis. For
+odometry and SLAM, event-based vision plays a crucial role in visual odom-
+etry [311] and simultaneous localization and mapping [27], providing accurate
+navigation and mapping capabilities. Tab. 3 highlights notable works using event
+cameras across various tasks and application domains, underscoring the trans-
+formative impact of event-based vision in addressing complex challenges and
+driving innovation.
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+12                B. Chakravarthi et al.
+
+                                Table 4: Summary of Real-world Event-based Datasets.
+
+               Dataset      Event Modality             Subject/Object                                                                                         Dataset
+     Year                                                                               Labeling                  Tasks
+                Name            Used                      Classes                                                                                            Description
+                         Prophesee EVK4 UAV’s, Pedestrians, Vehicles,                                                                Large-scale, high-resolution, visual object-tracking
+     2024 EventVOT [261]                                                             Yes, Manual      Object tracking
+                         HD             Ball sports                                                                                  dataset
+                         Prophesee EVK4                                              Yes, Manual,     Object detection,              High-resolution, large-scale, fixed Traffic perception
+     2024 eTraM [252]                   Vehicles, Pedestrians, Micro-mobility
+                         HD                                                          2D BB            tracking                       dataset for traffic monitoring
+                                        Human actions like sit, catch, throw,
+     2024 SeAct [295]    DAVIS346                                                    Yes              Action recognition             Event-text action recognition dataset
+                                        vomit, handshake
+                                                                                     Yes, Manual,                                    A large person detection dataset recorded with a moving
+     2023 PEDRo [17]        DAVIS346         Persons                                                  Objected detection
+                                                                                     2D BB                                           camera
+                                             Different sequences containing all                                                      Lip-reading dataset with over 100 classes, 40 speakers,
+     2022 DVS-Lip [247]     DAVIS346                                                 Yes              Gesture recognition
+                                             words in English vocabulary                                                             19K plus utterances in the English language
+                            Prophesee Gen3                                           Yes              Motion Segmentation,           Indoor dataset with moving objects, 3D motion of the
+     2022 EVIMO2 [20]                        Moving objects
+                            DVS Gen3                                                 Automatic        Recognition                    sensor, object motion and structure, masks and optical flow
+                            Prophesee Gen    Driving scenarios with diverse
+     2021 DSEC [71]                                                                  Yes              Stereo matching                High-resolution stereo dataset for driving scenarios
+                            3.1              illumination during day & nighttime
+                            Prophesee                                                Yes, Manual,    Object detection, tracking,        Large event-based automotive (cars and pedestrians)
+     2020 GEN1 [41]                          Cars, Pedestrians
+                            Gen 1                                                    2D BB           flow estimation                    detection dataset
+                            Prophesee        Pedestrians, two-wheelers, cars,        Yes, Automatic,                                    High-resolution large-scale automotive detection
+     2020 1 Mpx [196]                                                                                Object detection
+                            1 Mpx                                                    2D BB
+                                             trucks, buses, traffic signs, traffic lights                                               dataset (25M BB, 14 hr)
+                                             24 classes of hand gesture correspond                                                      Dataset for American Sign Language (ASL)
+     2019 ASL-DVS [12]      DAVIS240c                                                     Yes            Gesture recognition
+                                             to 24 letters (A-Y, excluding J)                                                           recognition
+                                                                                          Yes            Motion segmentation, visual Indoor dataset with moving objects, 3D motion of the
+     2019 EV-IMO [169]      DAVIS346         Moving objects
+                                                                                          Automatic      odometry, optical flow, stereo sensor, 3D object and structure, and object masks
+                            Prophesee                                                     Yes, 2D BB,                                   Large real-world event-based dataset for object
+     2018 N-Cars [235]                       Cars                                                        Object Classification
+                            Gen 1                                                         Semi-automatic                                classification
+                                                                                                                                        Synchronized stereo pair dataset recorded
+                                                                                                         Feature tracking, visual
+     2018 MVSEC [300]       DAVIS346B        Poses and depth                              Yes                                           from a handheld rig, hexacopter, top of a car, on a
+                                                                                                         odometry, depth estimation
+                                                                                                                                        motorcycle, in different illumination levels
+                                                                                                                                        driving recordings in highways, city during day,
+     2017 DDD17 [15]        DAVIS346B        Vehicle speed, driver steering etc.,         Yes            Steering angle prediction
+                                                                                                                                        evening, night, dry, and wet weather conditions
+                                                                                                                                        Gesture dataset comprising 11 hand gesture categories
+     2017 DvsGesture [6]    DVS128           11 hand and arm gesture classes              Yes            Gesture recognition
+                                                                                                                                        from 29 subjects under 3 illumination conditions
+            Event Camera                     Object rotation, translation, person                        Pose estimation, visual        The object’s motion captured in outdoor and indoor
+     2017                   DAVIS 240C                                                    Yes
+            Dataset [175]                    walking and running, etc.,                                  odometry, SLAM                 scenarios with varying speed and DoFs
+
+
+
+
+8           Data for Innovation: Event-based Vision Datasets
+Event-based vision datasets are crucial for advancing the field by providing re-
+sources for training and evaluating algorithms. Real-world datasets, captured
+with event cameras, cover diverse scenarios, while synthetic datasets from simu-
+lators offer controlled data for experimentation. This section reviews prominent
+datasets, summarized in Tab. 4 and Tab. 5, with a detailed list available on the
+GitHub page.
+
+8.1            Real-world Datasets
+The EventVOT [261] dataset offers high-resolution visual object tracking data
+using the Prophesee EVK4 HD camera, covering diverse target categories such
+as UAVs, pedestrians, vehicles, and ball sports across various motion speeds
+and lighting conditions. eTraM [252] dataset provides a comprehensive traffic
+monitoring dataset with 10 hr of data from the Prophesee EVK4 HD camera,
+including 2M bounding box annotations across eight traffic participant classes.
+SeAct [295] introduces a semantic-rich dataset for event-text action recogni-
+tion, collected with a DAVIS 346 camera and enhanced with GPT-4 gener-
+ated action captions. DVS-Lip [247] is a lip-reading dataset recorded with the
+DAVIS 346 camera, featuring 100 words and fine-grained movement informa-
+tion. DSEC [71] provides stereo data for driving scenarios, including lidar and
+GPS measurements, with 53 sequences collected under various illumination con-
+ditions. GEN1 [41] offers a large-scale automotive detection dataset with over
+39 hr of data collected in different driving conditions.
+    The 1 MPX [196] dataset includes high-resolution data from a 1-megapixel
+event camera, providing 25M bounding boxes for object detection in automo-
+tive scenarios. N-Cars [235] features recordings of urban environments for object
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+                                                                                                                                  Event Cameras: A Survey                                                       13
+
+                                      Table 5: Summary of Synthetic Event-based Datasets.
+
+              Dataset          Event Modality                 Subject/Object
+    Year                                                                                              Labeling                  Task                                Dataset Description
+               Name                Used                          Classes
+                                                Car, truck, van, bicycle, motorcycle,          Yes, Automatic labeling, Object detection,
+    2024 SEVD [2]              CARLA DVS                                                                                                       Multi-view ego and fixed perception dataset for traffic monitoring
+                                                pedestrian                                     2D and 3D BB              tracking
+                                                                                                                         Object Detection,     An event-based version of KITTI using the V2E for daytime images
+    2024 Event-KITTI [294] V2E                  Vehicles, pedestrians, cyclists, etc.,         Yes
+                                                                                                                         tracking              and a noise model for nighttime images of corresponding daytime
+         ESfP-Synthetic                         Scenes consisting of a textured mesh           Yes, ground-truth surface                       Dataset for Surface normal estimation using event-based shape from
+    2023                       ESIM                                                                                      Object reconstruction
+         [176]                                  illuminated with a point light source          normal from renderer                            polarization
+         N-EPIC                                 8 action classes (Put, take, open, close,                                                      Event-based camera extension of the large-scale EPIC-Kitchens
+    2022                       ESIM                                                            Yes                       Action Recognition
+         Kitchen [197]                          wash, cut, mix, pour)                                                                          dataset
+                               Samsung DVS
+    2021 N-ImageNet [113]                       1000 Object Classes (same as ImageNet)         Yes                      Object Recognition    Event-based version of the original ImageNet dataset.
+                               Gen3
+         CIFAR10-DVS                            10 Object Classes (airplane, automobile,
+    2017                       DVS camera                                                       Yes                     Object Classification Event-based representations of the original CIFAR-10 images
+         [129]                                  bird, cat, deer, dog, frog, horse, ship, truck)
+    2015 N-MNIST [184]   DVS camera             10 classes of digits (0-9)                      Yes                     Object Classification An event-based version of the original MNIST dataset
+                         ATIS image
+    2015 N-Caltech 101 [184]                    101 Object Classes (animals, vehicles, etc.,) Yes                       Object Classification Event-based version of the traditional Caltech101 dataset
+                         sensor
+    2015 MNIST-DVS [229] DVS camera             10 classes of digits (0-9)                     Yes                      Object Classification An event-based version of the original MNIST dataset
+
+
+
+
+classification, capturing 80 min of video with an ATIS camera. MVSEC [300]
+includes synchronized stereo data for 3D perception across varied environments,
+while DDD17 [15] provides both event and frame-based driving data with over 12
+hr of recordings. DvsGesture [6] is a gesture recognition dataset with 1, 342 in-
+stances of 11 hand and arm gestures recorded under different lighting conditions
+using the DVS 128 camera. Moreover, the Event Camera Dataset [175] offers
+data for pose estimation, visual odometry, and SLAM using a DAVIS camera.
+
+
+8.2          Synthetic Datasets
+
+The SEVD [2] dataset provides a comprehensive synthetic event-based vision
+dataset using multiple DVS cameras within the CARLA simulator. It captures
+multi-view data across various lighting and weather conditions for ego and fixed
+traffic perception, including RGB imagery, depth maps, optical flow, and segmen-
+tation annotations to facilitate diverse traffic monitoring. The Event-KITTI [294]
+dataset extends the KITTI by generating event streams from daytime and syn-
+thesizing nighttime images, aiding in scene flow analysis and motion fusion. The
+ESfP-Synthetic [176] dataset focuses on shape from polarization by rendering
+scenes with a polarizer and using ESIM to simulate events.
+    The N-ImageNet [113] dataset, derived from ImageNet using a moving event
+camera setup, serves as a benchmark for fine-grained object recognition, address-
+ing artifacts from monitor refresh mechanisms. The CIFAR10-DVS [129] dataset
+converts CIFAR-10 into event streams, offering an intermediate difficulty dataset
+for event-driven object classification through realistic image movements. Lastly,
+the N-MNIST and N-Caltech [184] datasets convert MNIST and Caltech101
+into spiking neuromorphic datasets using a pan-tilt camera platform, facilitat-
+ing studies on neuromorphic vision and sensor motion. These synthetic datasets
+have collectively advanced event-based vision, supporting diverse applications.
+
+
+9          Simulating Reality: The Event-based Simulators
+
+Event-based simulators are crucial for advancing event-based vision systems,
+providing synthetic data for algorithm validation and application exploration
+in a controlled, cost-effective manner. Notable simulators include the DAVIS
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+14               B. Chakravarthi et al.
+
+                       Table 6: Summary of Open-source Event Camera Simulators.
+
+                  Open Programming                                                                                                                                                                 Related
+     Simulator                                  Input                             Output                      Dependencies                                Description
+                 Source Language                                                                                                                                                                  Resources
+                                     Arbitrary 3D camera motion, Event streams, standard images,             OpenGL Renderer / Simulates arbitrary camera motion in 3D scenes, while providing
+  ESIM           Yes   C++                                                                                                                                                                      [60, 212]
+                                     initial images                IMU data, ground truth                    UnrealCVRenderer events, standard images, inertial measurements, with ground-truth
+  DAVIS                              Camera trajectory, Blender Event streams, camera calibration,                             Generates synthetic DVS datasets using Blender for prototyping
+                 Yes   Python                                                                                Blender                                                                            [59, 175]
+  Simulator                          scenes, render configurations ground truth, intensity images, depth map                   visual odometry or event-based feature tracking algorithms
+                                     RGB or grayscale videos,                                                PyTorch, OpenCV, synthesizes event data from any real (or synthetic) conventional
+  v2e            Yes   Python                                      event frame videos (.h5 format)                                                                                              [85, 227]
+                                     image sequences                                                         Python packages   frame-based video using pre-trained DVS pixel model
+  ICNS                 Python/       Videos, Blender-generated     Event streams, camera calibration,                          an extended DVS pixel simulator for neuromorphic benchmarks
+             Yes                                                                                             Blender                                                                            [111, 244]
+  Simulator            C++/Matlab    scenes, camera trajectories   ground truth, intensity images                              which simplifies the latency and the noise models
+  V2CE                               RGB or gray-scale videos,                                                                 Converts RGB or gray-scale videos to event streams. Trained on
+             Yes       Python                                      Event streams                             PyTorch                                                                            [50, 291]
+  Toolbox                            image sequences                                                                           MVSEC dataset, optimized for DAVIS 346B cameras (346x260px).
+  DVS-                                                                                                                         Stochastic DVS simulator, incorporating voltage variations,
+             Yes       Python        High frame-rate videos        Event streams                             PyTorch, OpenCV                                                                    [138, 156]
+  Voltmeter                                                                                                                    randomness from photon reception, and noise effects.
+  Carla:               Python/       Synchronous frames from                                               CARLA simulator,     Emulates a DVS intensity changes asynchronously, providing
+             Yes                                                  Event streams (carla.DVSEventArray)                                                                                            [234]
+  DVS Camera           C++           a video within CARLA                                                  Python packages      microsecond temporal resolution.
+  Prophesee:                         Image (png/jpg) or video                                              Metavision SDK,      Transforms frame-based images or videos into event-based
+             Yes       Python                                     Event-based frame/video                                                                                                        [200]
+  VtoE                               (mp4/avi)                                                             Python packages      counterpart
+  DVS-                                                                                                                          Stochastic DVS simulator, incorporating voltage variations,
+                 Yes   Python        High frame-rate videos       Event streams                            PyTorch, OpenCV                                                                       [138, 156]
+  Voltmeter                                                                                                                     randomness from photon reception, and noise effects.
+                       Python/       Synchronous frames from                                               VISTA simulator,     Synthesizes event data locally around RGB data given a viewpoint
+  VISTA          Yes                                              Event streams                                                                                                                  [5]
+                       C++           a video within VISTA                                                  Python packages      and timestamp with video interpolation and event emission model
+
+
+
+
+Simulator [175], which generated event streams, intensity frames, and depth
+maps with high temporal precision through time interpolation. The ESIM [212]
+extended this by offering an open-source platform for modeling camera motion
+in 3D scenes, producing events and comprehensive ground truth data.
+    The v2e simulator [85] converted conventional video frames into realistic
+event-based data, addressing non-idealities such as Gaussian event threshold
+mismatch. The ICNS simulator [111] enhanced noise accuracy by integrating real
+pixel noise distributions. The DVS-Voltmeter [138] used a stochastic approach to
+simulate realistic events, incorporating voltage variations and noise effects from
+high-frame-rate videos. The V2CE Toolbox [291] improved video-to-event con-
+version with dynamic-aware timestamp inference. Additionally, the CARLA DVS
+camera [234] implementation simulates event generation with high-frequency ex-
+ecution to emulate microsecond resolution and adjust sensor frequency based
+on scene dynamics, while Prophesee Video to Event Simulator [200] provides a
+Python script for converting frame-based videos into event-based counterparts.
+Together, these simulators are essential for developing and testing event-based
+vision systems, driving innovation in the field. Tab. 6 summarizes the most com-
+monly used event-based simulators.
+
+
+10            Conclusion
+Event cameras have significantly impacted visual sensing technology and this
+survey outlines their evolution, explains their operational principles, and high-
+lights how they differ from traditional frame-based cameras. It reviews various
+models and key milestones, offering a comprehensive overview of event-based vi-
+sion as it stands today. The diverse applications of event cameras across different
+fields demonstrate their flexibility and potential. The importance of real-world
+and synthetic datasets in advancing the field is emphasized, along with the role
+of simulators in improving testing and development. As research progresses, con-
+solidating and sharing knowledge will be essential for addressing new challenges
+and promoting further innovation. The GitHub page provided will be a valu-
+able resource for the research community, offering access to past research and
+continuously updated with ongoing research and other relevant materials.
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+                                                   Event Cameras: A Survey         15
+
+References
+ 1. Ahmad, S., Morerio, P., Del Bue, A.: Person re-identification without identifica-
+    tion via event anonymization. In: Proceedings of the IEEE/CVF International
+    Conference on Computer Vision. pp. 11132–11141 (2023)
+ 2. Aliminati, M.R., Chakravarthi, B., Verma, A.A., Vaghela, A., Wei, H., Zhou, X.,
+    Yang, Y.: Sevd: Synthetic event-based vision dataset for ego and fixed traffic
+    perception. arXiv preprint arXiv:2404.10540 (2024)
+ 3. Alkendi, Y., Azzam, R., Ayyad, A., Javed, S., Seneviratne, L., Zweiri, Y.: Neuro-
+    morphic camera denoising using graph neural network-driven transformers. IEEE
+    Transactions on Neural Networks and Learning Systems 35(3), 4110–4124 (2024).
+    https://doi.org/10.1109/TNNLS.2022.3201830
+ 4. Alonso, I., Murillo, A.C.: Ev-segnet: Semantic segmentation for event-based cam-
+    eras. In: Proceedings of the IEEE/CVF Conference on Computer Vision and
+    Pattern Recognition Workshops. pp. 0–0 (2019)
+ 5. Amini, A., Wang, T.H., Gilitschenski, I., Schwarting, W., Liu, Z., Han, S.,
+    Karaman, S., Rus, D.: Vista 2.0: An open, data-driven simulator for multi-
+    modal sensing and policy learning for autonomous vehicles. In: 2022 Interna-
+    tional Conference on Robotics and Automation (ICRA). pp. 2419–2426 (2022).
+    https://doi.org/10.1109/ICRA46639.2022.9812276
+ 6. Amir, A., Taba, B., Berg, D., Melano, T., McKinstry, J., Di Nolfo, C., Nayak, T.,
+    Andreopoulos, A., Garreau, G., Mendoza, M., et al.: A low power, fully event-
+    based gesture recognition system. In: Proceedings of the IEEE conference on
+    computer vision and pattern recognition. pp. 7243–7252 (2017)
+ 7. Andreopoulos, A., Kashyap, H.J., Nayak, T.K., Amir, A., Flickner, M.D.: A
+    low power, high throughput, fully event-based stereo system. In: Proceedings of
+    the IEEE conference on computer vision and pattern recognition. pp. 7532–7542
+    (2018)
+ 8. Bagchi, S., Chin, T.J.: Event-based star tracking via multiresolution progressive
+    hough transforms. In: Proceedings of the IEEE/CVF Winter Conference on Ap-
+    plications of Computer Vision. pp. 2143–2152 (2020)
+ 9. Baldwin, R., Almatrafi, M., Asari, V., Hirakawa, K.: Event probability mask
+    (epm) and event denoising convolutional neural network (edncnn) for neuromor-
+    phic cameras. In: Proceedings of the IEEE/CVF Conference on Computer Vision
+    and Pattern Recognition. pp. 1701–1710 (2020)
+10. Bartolozzi, C., Rea, F., Clercq, C., Fasnacht, D.B., Indiveri, G., Hofstätter, M.,
+    Metta, G.: Embedded neuromorphic vision for humanoid robots. In: CVPR 2011
+    workshops. pp. 129–135. IEEE (2011)
+11. Benosman, R., Clercq, C., Lagorce, X., Ieng, S.H., Bartolozzi, C.: Event-based
+    visual flow. IEEE transactions on neural networks and learning systems 25(2),
+    407–417 (2013)
+12. Bi, Y., Chadha, A., Abbas, A., Bourtsoulatze, E., Andreopoulos, Y.: Graph-
+    based object classification for neuromorphic vision sensing. In: Proceedings of
+    the IEEE/CVF international conference on computer vision. pp. 491–501 (2019)
+13. Bi, Y., Chadha, A., Abbas, A., Bourtsoulatze, E., Andreopoulos, Y.: Graph-based
+    spatio-temporal feature learning for neuromorphic vision sensing. IEEE Transac-
+    tions on Image Processing 29, 9084–9098 (2020)
+14. Bichler, O., Querlioz, D., Thorpe, S.J., Bourgoin, J.P., Gamrat, C.: Extraction
+    of temporally correlated features from dynamic vision sensors with spike-timing-
+    dependent plasticity. Neural networks 32, 339–348 (2012)
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+16     B. Chakravarthi et al.
+
+15. Binas, J., Neil, D., Liu, S.C., Delbruck, T.: Ddd17: End-to-end davis driving
+    dataset. arXiv preprint arXiv:1711.01458 (2017)
+16. Biswas, S.D., Kosta, A., Liyanagedera, C., Apolinario, M., Roy, K.: Halsie: Hybrid
+    approach to learning segmentation by simultaneously exploiting image and event
+    modalities. In: 2024 IEEE/CVF Winter Conference on Applications of Computer
+    Vision (WACV). pp. 5952–5962. IEEE (2024)
+17. Boretti, C., Bich, P., Pareschi, F., Prono, L., Rovatti, R., Setti, G.: Pedro:
+    An event-based dataset for person detection in robotics. In: Proceedings of the
+    IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 4065–
+    4070 (2023)
+18. Brebion, V., Moreau, J., Davoine, F.: Learning to estimate two dense depths
+    from lidar and event data. In: Scandinavian Conference on Image Analysis. pp.
+    517–533. Springer (2023)
+19. Bülthoff, H.H., Lee, S.W., Poggio, T., Wallraven, C.: Biologically Motivated Com-
+    puter Vision: Second International Workshop, BMCV 2002, Tübingen, Germany,
+    November 22-24, 2002, Proceedings, vol. 2525. Springer (2003)
+20. Burner, L., Mitrokhin, A., Fermüller, C., Aloimonos, Y.: Evimo2: an event camera
+    dataset for motion segmentation, optical flow, structure from motion, and visual
+    inertial odometry in indoor scenes with monocular or stereo algorithms. arXiv
+    preprint arXiv:2205.03467 (2022)
+21. Camunas-Mesa, L., Zamarreno-Ramos, C., Linares-Barranco, A., Acosta-Jimenez,
+    A.J., Serrano-Gotarredona, T., Linares-Barranco, B.: An event-driven multi-
+    kernel convolution processor module for event-driven vision sensors. IEEE Journal
+    of Solid-State Circuits 47(2), 504–517 (2011)
+22. Cannici, M., Ciccone, M., Romanoni, A., Matteucci, M.: Attention mechanisms for
+    object recognition with event-based cameras. In: 2019 IEEE Winter Conference
+    on Applications of Computer Vision (WACV). pp. 1127–1136. IEEE (2019)
+23. Cannici, M., Scaramuzza, D.: Mitigating motion blur in neural radiance fields with
+    events and frames. In: Proceedings of the IEEE/CVF Conference on Computer
+    Vision and Pattern Recognition. pp. 9286–9296 (2024)
+24. Cao, C., Fu, X., Liu, H., Huang, Y., Wang, K., Luo, J., Zha, Z.J.: Event-guided
+    person re-identification via sparse-dense complementary learning. In: Proceedings
+    of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp.
+    17990–17999 (2023)
+25. Censi, A., Scaramuzza, D.: Low-latency event-based visual odometry. In: 2014
+    IEEE International Conference on Robotics and Automation (ICRA). pp. 703–
+    710. IEEE (2014)
+26. Chakravarthi, B., Manoj Kumar, M., Pavan Kumar, B.: Event-based sensing for
+    improved traffic detection and tracking in intelligent transport systems toward
+    sustainable mobility. In: International Conference on Interdisciplinary Approaches
+    in Civil Engineering for Sustainable Development. pp. 83–95. Springer (2023)
+27. Chamorro, W., Solà, J., Andrade-Cetto, J.: Event-based line slam in real-time.
+    IEEE Robotics and Automation Letters 7(3), 8146–8153 (2022). https://doi.
+    org/10.1109/LRA.2022.3187266
+28. Chen, G., Cao, H., Conradt, J., Tang, H., Rohrbein, F., Knoll, A.: Event-based
+    neuromorphic vision for autonomous driving: A paradigm shift for bio-inspired
+    visual sensing and perception. IEEE Signal Processing Magazine 37(4), 34–49
+    (2020)
+29. Chen, J., Feng, B.Y., Cai, H., Xie, M., Metzler, C., Fermüller, C., Aloimonos,
+    Y.: Timerewind: Rewinding time with image-and-events video diffusion. arXiv
+    preprint arXiv:2403.13800 (2024)
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+                                                   Event Cameras: A Survey          17
+
+30. Chen, Z., Zhu, Z., Zhang, Y., Hou, J., Shi, G., Wu, J.: Segment any event streams
+    via weighted adaptation of pivotal tokens. In: Proceedings of the IEEE/CVF
+    Conference on Computer Vision and Pattern Recognition. pp. 3890–3900 (2024)
+31. Chiberre, P., Perot, E., Sironi, A., Lepetit, V.: Detecting stable keypoints from
+    events through image gradient prediction. In: 2021 IEEE/CVF Conference on
+    Computer Vision and Pattern Recognition Workshops (CVPRW). pp. 1387–1394
+    (2021). https://doi.org/10.1109/CVPRW53098.2021.00153
+32. Cho, H., Cho, J., Yoon, K.J.: Learning adaptive dense event stereo from the image
+    domain. In: Proceedings of the IEEE/CVF Conference on Computer Vision and
+    Pattern Recognition. pp. 17797–17807 (2023)
+33. Cho, H., Jeong, Y., Kim, T., Yoon, K.J.: Non-coaxial event-guided motion de-
+    blurring with spatial alignment. In: Proceedings of the IEEE/CVF International
+    Conference on Computer Vision. pp. 12492–12503 (2023)
+34. Cho, H., Kim, H., Chae, Y., Yoon, K.J.: Label-free event-based object recogni-
+    tion via joint learning with image reconstruction from events. In: Proceedings of
+    the IEEE/CVF International Conference on Computer Vision. pp. 19866–19877
+    (2023)
+35. Cho, H., Kim, T., Jeong, Y., Yoon, K.J.: Tta-evf: Test-time adaptation for event-
+    based video frame interpolation via reliable pixel and sample estimation. In: Pro-
+    ceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recog-
+    nition. pp. 25701–25711 (2024)
+36. Cho, H., Yoon, K.J.: Selection and cross similarity for event-image deep stereo.
+    In: European Conference on Computer Vision. pp. 470–486. Springer (2022)
+37. Cocheteux, M., Moreau, J., Davoine, F.: Muli-ev: Maintaining unperturbed lidar-
+    event calibration. In: Proceedings of the IEEE/CVF Conference on Computer
+    Vision and Pattern Recognition. pp. 4579–4586 (2024)
+38. Conradt, J., Berner, R., Cook, M., Delbruck, T.: An embedded aer dynamic vi-
+    sion sensor for low-latency pole balancing. In: 2009 IEEE 12th International Con-
+    ference on Computer Vision Workshops, ICCV Workshops. pp. 780–785. IEEE
+    (2009)
+39. Conradt, J., Cook, M., Berner, R., Lichtsteiner, P., Douglas, R.J., Delbruck, T.: A
+    pencil balancing robot using a pair of aer dynamic vision sensors. In: 2009 IEEE
+    International Symposium on Circuits and Systems. pp. 781–784. IEEE (2009)
+40. Dai, P., Zhang, Y., Yu, X., Lyu, X., Qi, X.: Hybrid neural rendering for large-
+    scale scenes with motion blur. In: Proceedings of the IEEE/CVF Conference on
+    Computer Vision and Pattern Recognition (CVPR). pp. 154–164 (June 2023)
+41. De Tournemire, P., Nitti, D., Perot, E., Migliore, D., Sironi, A.: A large scale
+    event-based detection dataset for automotive. arXiv preprint arXiv:2001.08499
+    (2020)
+42. Delbruck, T., Lang, M.: Robotic goalie with 3 ms reaction time at 4% cpu load
+    using event-based dynamic vision sensor. Frontiers in neuroscience 7, 223 (2013)
+43. Delbrück, T., Linares-Barranco, B., Culurciello, E., Posch, C.: Activity-driven,
+    event-based vision sensors. In: Proceedings of 2010 IEEE international symposium
+    on circuits and systems. pp. 2426–2429. IEEE (2010)
+44. Delbruck, T., et al.: Frame-free dynamic digital vision. In: Proceedings of Intl.
+    Symp. on Secure-Life Electronics, Advanced Electronics for Quality Life and So-
+    ciety. vol. 1, pp. 21–26. Citeseer (2008)
+45. Deng, Y., Chen, H., Liu, H., Li, Y.: A voxel graph cnn for object classification
+    with event cameras. In: Proceedings of the IEEE/CVF Conference on Computer
+    Vision and Pattern Recognition. pp. 1172–1181 (2022)
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+18     B. Chakravarthi et al.
+
+46. Deniz, D., Ros, E., Fermüller, C., Barranco, F.: When do neuromorphic sensors
+    outperform cameras? learning from dynamic features. In: 2023 57th Annual Con-
+    ference on Information Sciences and Systems (CISS). pp. 1–6. IEEE (2023)
+47. Dowling, J.: Artificial human vision. Expert Review of Medical Devices 2(1),
+    73–85 (2005)
+48. Duan, P., Wang, Z.W., Zhou, X., Ma, Y., Shi, B.: Eventzoom: Learning to de-
+    noise and super resolve neuromorphic events. In: Proceedings of the IEEE/CVF
+    conference on computer vision and pattern recognition. pp. 12824–12833 (2021)
+49. Duan, Y.: Led: A large-scale real-world paired dataset for event camera denoising.
+    In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+    Recognition. pp. 25637–25647 (2024)
+50. DVS, U.H.: V2ce toolbox (2023), https://github.com/ucsd-hdsi-dvs/V2CE-
+    Toolbox, accessed: 2024-07-17
+51. Elms, E., Latif, Y., Park, T.H., Chin, T.J.: Event-based structure-from-orbit.
+    In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+    Recognition. pp. 19541–19550 (2024)
+52. Erbach, J., Tulyakov, S., Vitoria, P., Bochicchio, A., Li, Y.: Evshutter: Trans-
+    forming events for unconstrained rolling shutter correction. In: 2023 IEEE/CVF
+    Conference on Computer Vision and Pattern Recognition (CVPR). pp. 13904–
+    13913 (2023). https://doi.org/10.1109/CVPR52729.2023.01336
+53. Ercan, B., Eker, O., Saglam, C., Erdem, A., Erdem, E.: Hypere2vid: Improving
+    event-based video reconstruction via hypernetworks. IEEE Transactions on Image
+    Processing 33, 1826–1837 (2024). https://doi.org/10.1109/TIP.2024.3372460
+54. Everding, L., Conradt, J.: Low-latency line tracking using event-based dynamic
+    vision sensors. Frontiers in neurorobotics 12, 4 (2018)
+55. Falanga, D., Kleber, K., Scaramuzza, D.: Dynamic obstacle avoidance for quadro-
+    tors with event cameras. Science Robotics 5(40), eaaz9712 (2020)
+56. Firouzi, M., Conradt, J.: Asynchronous event-based cooperative stereo matching
+    using neuromorphic silicon retinas. Neural Processing Letters 43, 311–326 (2016)
+57. Floreano, D., Mattiussi, C.: Evolution of spiking neural controllers for autonomous
+    vision-based robots. In: International Symposium on Evolutionary Robotics. pp.
+    38–61. Springer (2001)
+58. Forrai, B., Miki, T., Gehrig, D., Hutter, M., Scaramuzza, D.: Event-based agile
+    object catching with a quadrupedal robot. In: 2023 IEEE International Conference
+    on Robotics and Automation (ICRA). pp. 12177–12183 (2023). https://doi.
+    org/10.1109/ICRA48891.2023.10161392
+59. Forster, C., Liu, H., Chen, Q., Scaramuzza, D.: Davis simulator. https://github.
+    com/uzh-rpg/rpg_davis_simulator (2023)
+60. Forster, C., Liu, H., Chen, Q., Scaramuzza, D.: Esim: an open event camera
+    simulator. https://github.com/uzh-rpg/rpg_esim (2023)
+61. Gallego, G., Delbrück, T., Orchard, G., Bartolozzi, C., Taba, B., Censi, A.,
+    Leutenegger, S., Davison, A.J., Conradt, J., Daniilidis, K., et al.: Event-based
+    vision: A survey. IEEE transactions on pattern analysis and machine intelligence
+    44(1), 154–180 (2020)
+62. Gallego, G., Gehrig, M., Scaramuzza, D.: Focus is all you need: Loss functions for
+    event-based vision. In: Proceedings of the IEEE/CVF Conference on Computer
+    Vision and Pattern Recognition. pp. 12280–12289 (2019)
+63. Gallego, G., Rebecq, H., Scaramuzza, D.: A unifying contrast maximization frame-
+    work for event cameras, with applications to motion, depth, and optical flow esti-
+    mation. In: Proceedings of the IEEE conference on computer vision and pattern
+    recognition. pp. 3867–3876 (2018)
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+                                                     Event Cameras: A Survey          19
+
+64. Gao, L., Gehrig, D., Su, H., Scaramuzza, D., Kneip, L.: An n-point linear solver for
+    line and motion estimation with event cameras. In: Proceedings of the IEEE/CVF
+    Conference on Computer Vision and Pattern Recognition. pp. 14596–14605 (2024)
+65. Gao, L., Liang, Y., Yang, J., Wu, S., Wang, C., Chen, J., Kneip, L.: Vector:
+    A versatile event-centric benchmark for multi-sensor slam. IEEE Robotics and
+    Automation Letters 7(3), 8217–8224 (2022). https://doi.org/10.1109/LRA.
+    2022.3186770
+66. Gao, Y., Zhu, Y., Li, X., Du, Y., Zhang, T.: Sd2event: Self-supervised learning of
+    dynamic detectors and contextual descriptors for event cameras. In: Proceedings
+    of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp.
+    3055–3064 (2024)
+67. Gao, Y., Lu, J., Li, S., Li, Y., Du, S.: Hypergraph-based multi-view action recog-
+    nition using event cameras. IEEE Transactions on Pattern Analysis and Machine
+    Intelligence pp. 1–14 (2024). https://doi.org/10.1109/TPAMI.2024.3382117
+68. Gehrig, D., Gehrig, M., Hidalgo-Carrió, J., Scaramuzza, D.: Video to events:
+    Recycling video datasets for event cameras. In: Proceedings of the IEEE/CVF
+    Conference on Computer Vision and Pattern Recognition. pp. 3586–3595 (2020)
+69. Gehrig, D., Rebecq, H., Gallego, G., Scaramuzza, D.: Asynchronous, photomet-
+    ric feature tracking using events and frames. In: Proceedings of the European
+    Conference on Computer Vision (ECCV). pp. 750–765 (2018)
+70. Gehrig, D., Scaramuzza, D.: Low latency automotive vision with event cameras
+    (2024)
+71. Gehrig, M., Aarents, W., Gehrig, D., Scaramuzza, D.: Dsec: A stereo event camera
+    dataset for driving scenarios. IEEE Robotics and Automation Letters 6(3), 4947–
+    4954 (2021)
+72. Gehrig, M., Scaramuzza, D.: Recurrent vision transformers for object detection
+    with event cameras. In: Proceedings of the IEEE/CVF conference on computer
+    vision and pattern recognition. pp. 13884–13893 (2023)
+73. Geng, M., Zhu, L., Wang, L., Zhang, W., Xiong, R., Tian, Y.: Event-based visible
+    and infrared fusion via multi-task collaboration. In: Proceedings of the IEEE/CVF
+    Conference on Computer Vision and Pattern Recognition. pp. 26929–26939 (2024)
+74. Gentil, C.L., Alzugaray, I., Vidal-Calleja, T.: Continuous-time gaussian process
+    motion-compensation for event-vision pattern tracking with distance fields. In:
+    2023 IEEE International Conference on Robotics and Automation (ICRA). pp.
+    804–812 (2023). https://doi.org/10.1109/ICRA48891.2023.10160768
+75. Gokarn, I., Misra, A.: Poster: Profiling event vision processing on edge devices.
+    In: Proceedings of the 22nd Annual International Conference on Mobile Systems,
+    Applications and Services. pp. 672–673 (2024)
+76. Guo, S., Delbruck, T.: Low cost and latency event camera background activity de-
+    noising. IEEE Transactions on Pattern Analysis and Machine Intelligence 45(1),
+    785–795 (2023). https://doi.org/10.1109/TPAMI.2022.3152999
+77. Guo, S., Gallego, G.: CMax-SLAM: Event-based rotational-motion bundle ad-
+    justment and SLAM system using contrast maximization. IEEE Transactions on
+    Robotics 40, 2442–2461 (2024). https://doi.org/10.1109/TRO.2024.3378443
+78. Habuchi, S., Takahashi, K., Tsutake, C., Fujii, T., Nagahara, H.: Time-efficient
+    light-field acquisition using coded aperture and events. In: Proceedings of the
+    IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 24923–
+    24933 (2024)
+79. Han, J., Asano, Y., Shi, B., Zheng, Y., Sato, I.: High-fidelity event-radiance recov-
+    ery via transient event frequency. In: Proceedings of the IEEE/CVF Conference
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+20     B. Chakravarthi et al.
+
+    on Computer Vision and Pattern Recognition (CVPR). pp. 20616–20625 (June
+    2023)
+80. Han, J., Yang, Y., Zhou, C., Xu, C., Shi, B.: Evintsr-net: Event guided mul-
+    tiple latent frames reconstruction and super-resolution. In: Proceedings of the
+    IEEE/CVF International Conference on Computer Vision. pp. 4882–4891 (2021)
+81. Harrison, R.R., Koch, C.: A neuromorphic visual motion sensor for real-world
+    robots. In: Workshop on Defining the Future of Biomorphic Robotics, IROS.
+    vol. 98. Citeseer (1998)
+82. He, W., You, K., Qiao, Z., Jia, X., Zhang, Z., Wang, W., Lu, H., Wang, Y., Liao,
+    J.: Timereplayer: Unlocking the potential of event cameras for video interpolation.
+    In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+    Recognition. pp. 17804–17813 (2022)
+83. Hidalgo-Carrió, J., Gallego, G., Scaramuzza, D.: Event-aided direct sparse odom-
+    etry. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pat-
+    tern Recognition. pp. 5781–5790 (2022)
+84. Hu, S., Kim, Y., Lim, H., Lee, A.J., Myung, H.: ecdt: Event clustering for si-
+    multaneous feature detection and tracking. In: 2022 IEEE/RSJ International
+    Conference on Intelligent Robots and Systems (IROS). pp. 3808–3815 (2022).
+    https://doi.org/10.1109/IROS47612.2022.9981451
+85. Hu, Y., Liu, S.C., Delbruck, T.: v2e: From video frames to realistic dvs events.
+    In: Proceedings of the IEEE/CVF conference on computer vision and pattern
+    recognition. pp. 1312–1321 (2021)
+86. Huang, X., Zhang, Y., Xiong, Z.: Progressive spatio-temporal alignment for effi-
+    cient event-based motion estimation. In: Proceedings of the IEEE/CVF Confer-
+    ence on Computer Vision and Pattern Recognition. pp. 1537–1546 (2023)
+87. Huang, Z., Sun, L., Zhao, C., Li, S., Su, S.: Eventpoint: Self-supervised interest
+    point detection and description for event-based camera. In: Proceedings of the
+    IEEE/CVF Winter Conference on Applications of Computer Vision. pp. 5396–
+    5405 (2023)
+88. Huang, Z., Liang, Q., Yu, Y., Qin, C., Zheng, X., Huang, K., Zhou, Z., Yang,
+    W.: Bilateral event mining and complementary for event stream super-resolution.
+    In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+    Recognition. pp. 34–43 (2024)
+89. Hwang, I., Kim, J., Kim, Y.M.: Ev-nerf: Event based neural radiance field. In:
+    Proceedings of the IEEE/CVF Winter Conference on Applications of Computer
+    Vision. pp. 837–847 (2023)
+90. Iaboni, C., Lobo, D., Choi, J.W., Abichandani, P.: Event-based motion capture
+    system for online multi-quadrotor localization and tracking. Sensors 22(9), 3240
+    (2022)
+91. Imatest: Dynamic range. https : / / www . imatest . com / solutions / dynamic -
+    range/ (2024), accessed: 2024-07-23
+92. iniVation: Davis 240 dvs event camera (2019), https://inivation.com/wp-
+    content/uploads/2019/08/DAVIS240.pdf, accessed: 2024-07-18
+93. iniVation: Dvs128 event camera (2019), https://inivation.com/wp-content/
+    uploads/2019/08/DVS128.pdf, accessed: 2024-07-18
+94. iniVation: Davis 346 aer - event camera (2024), https://docs.inivation.com/
+    hardware/current-products/davis346-aer.html, accessed: 2024-07-18
+95. iniVation: Dv - open-source software (2024), https://docs.inivation.com/
+    software/dv/index.html, accessed: 2024-07-18
+96. iniVation: Dv-processing - c++/python library (2024), https : / / docs .
+    inivation.com/software/dv-processing.html, accessed: 2024-07-18
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+                                                     Event Cameras: A Survey         21
+
+ 97. iniVation: Dvs 346 event camera (2024), https : / / docs . inivation . com /
+     hardware/current-products/davis346.html, accessed: 2024-07-18
+ 98. iniVation: Dvxplorer - event camera (2024), https://docs.inivation.com/
+     hardware/current-products/dvxplorer.html, accessed: 2024-07-18
+ 99. iniVation: Dvxplorer lite - event camera (2024), https://docs.inivation.com/
+     hardware/current-products/dvxplorer-lite.html, accessed: 2024-07-18
+100. iniVation: Dvxplorer s duo (2024), https://docs.inivation.com/hardware/
+     current-products/dvxplorer-s-duo.html, accessed: 2024-07-18
+101. iniVation: inivation – neuromorphic vision systems (2024), https://inivation.
+     com/, accessed: 2024-07-18
+102. iniVation: Stereo kit (2024), https://docs.inivation.com/hardware/current-
+     products/stereo-kit.html, accessed: 2024-07-18
+103. Insightness: Insightness – sight for your device (2024), https : / / www .
+     insightness.com/, accessed: 2024-07-18
+104. Itti, L.: The ilab neuromorphic vision c++ toolkit: Free tools for the next gener-
+     ation of vision algorithms. The Neuromorphic Engineer 1(1), 10 (2004)
+105. Jawaid, M., Elms, E., Latif, Y., Chin, T.J.: Towards bridging the space domain
+     gap for satellite pose estimation using event sensing. In: 2023 IEEE International
+     Conference on Robotics and Automation (ICRA). pp. 11866–11873 (2023). https:
+     //doi.org/10.1109/ICRA48891.2023.10160531
+106. Jiang, J., Zhou, X., Wang, B., Deng, X., Xu, C., Shi, B.: Complementing event
+     streams and rgb frames for hand mesh reconstruction. In: Proceedings of the
+     IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 24944–
+     24954 (2024)
+107. Jiang, Z., Zhang, Y., Zou, D., Ren, J., Lv, J., Liu, Y.: Learning event-based
+     motion deblurring. In: Proceedings of the IEEE/CVF Conference on Computer
+     Vision and Pattern Recognition. pp. 3320–3329 (2020)
+108. Jiao, J., Huang, H., Li, L., He, Z., Zhu, Y., Liu, M.: Comparing representations in
+     tracking for event camera-based slam. In: Proceedings of the IEEE/cvf conference
+     on computer vision and pattern recognition. pp. 1369–1376 (2021)
+109. Jing, L., Ding, Y., Gao, Y., Wang, Z., Yan, X., Wang, D., Schaefer, G., Fang,
+     H., Zhao, B., Li, X.: Hpl-ess: Hybrid pseudo-labeling for unsupervised event-
+     based semantic segmentation. In: Proceedings of the IEEE/CVF Conference on
+     Computer Vision and Pattern Recognition. pp. 23128–23137 (2024)
+110. Jing, Y., Yang, Y., Wang, X., Song, M., Tao, D.: Turning frequency to resolu-
+     tion: Video super-resolution via event cameras. In: Proceedings of the IEEE/CVF
+     Conference on Computer Vision and Pattern Recognition. pp. 7772–7781 (2021)
+111. Joubert, D., Marcireau, A., Ralph, N., Jolley, A., Van Schaik, A., Cohen, G.:
+     Event camera simulator improvements via characterized parameters. Frontiers in
+     Neuroscience 15, 702765 (2021)
+112. Khodamoradi, A., Kastner, R.: o(n) o (n)-space spatiotemporal filter for reducing
+     noise in neuromorphic vision sensors. IEEE Transactions on Emerging Topics in
+     Computing 9(1), 15–23 (2018)
+113. Kim, J., Bae, J., Park, G., Zhang, D., Kim, Y.M.: N-imagenet: Towards ro-
+     bust, fine-grained object recognition with event cameras. In: Proceedings of the
+     IEEE/CVF international conference on computer vision. pp. 2146–2156 (2021)
+114. Kim, J., Hwang, I., Kim, Y.M.: Ev-tta: Test-time adaptation for event-based
+     object recognition. In: Proceedings of the IEEE/CVF Conference on Computer
+     Vision and Pattern Recognition. pp. 17745–17754 (2022)
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+22      B. Chakravarthi et al.
+
+115. Kim, T., Chae, Y., Jang, H.K., Yoon, K.J.: Event-based video frame interpolation
+     with cross-modal asymmetric bidirectional motion fields. In: Proceedings of the
+     IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 18032–
+     18042 (2023)
+116. Kim, T., Cho, H., Yoon, K.J.: Frequency-aware event-based video deblurring for
+     real-world motion blur. In: Proceedings of the IEEE/CVF Conference on Com-
+     puter Vision and Pattern Recognition. pp. 24966–24976 (2024)
+117. Kim, T., Lee, J., Wang, L., Yoon, K.J.: Event-guided deblurring of unknown
+     exposure time videos. In: European Conference on Computer Vision. pp. 519–
+     538. Springer (2022)
+118. Klenk, S., Bonello, D., Koestler, L., Araslanov, N., Cremers, D.: Masked event
+     modeling: Self-supervised pretraining for event cameras. In: Proceedings of the
+     IEEE/CVF Winter Conference on Applications of Computer Vision. pp. 2378–
+     2388 (2024)
+119. Klenk, S., Koestler, L., Scaramuzza, D., Cremers, D.: E-nerf: Neural radiance
+     fields from a moving event camera. IEEE Robotics and Automation Letters 8(3),
+     1587–1594 (2023)
+120. Kodama, K., Sato, Y., Yorikado, Y., Berner, R., Mizoguchi, K., Miyazaki, T.,
+     Tsukamoto, M., Matoba, Y., Shinozaki, H., Niwa, A., Yamaguchi, T., Brandli,
+     C., Wakabayashi, H., Oike, Y.: 1.22µm 35.6mpixel rgb hybrid event-based vision
+     sensor with 4.88µm-pitch event pixels and up to 10k event frame rate by adap-
+     tive control on event sparsity. In: 2023 IEEE International Solid-State Circuits
+     Conference (ISSCC). pp. 92–94 (2023). https://doi.org/10.1109/ISSCC42615.
+     2023.10067520
+121. Kong, L., Liu, Y., Ng, L.X., Cottereau, B.R., Ooi, W.T.: Openess: Event-based
+     semantic scene understanding with open vocabularies. In: Proceedings of the
+     IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 15686–
+     15698 (2024)
+122. Kosta, A.K., Roy, K.: Adaptive-spikenet: Event-based optical flow estimation us-
+     ing spiking neural networks with learnable neuronal dynamics. In: 2023 IEEE
+     International Conference on Robotics and Automation (ICRA). pp. 6021–6027
+     (2023). https://doi.org/10.1109/ICRA48891.2023.10160551
+123. Kılıç, O.S., Akman, A., Alatan, A.A.: E-vfia: Event-based video frame interpola-
+     tion with attention. In: 2023 IEEE International Conference on Robotics and Au-
+     tomation (ICRA). pp. 8284–8290 (2023). https://doi.org/10.1109/ICRA48891.
+     2023.10160276
+124. Labs, L.V.: Lucid vision labs: Industrial machine vision cameras (2024), https:
+     //thinklucid.com/, accessed: 2024-07-18
+125. Lagorce, X., Meyer, C., Ieng, S.H., Filliat, D., Benosman, R.: Asynchronous event-
+     based multikernel algorithm for high-speed visual features tracking. IEEE trans-
+     actions on neural networks and learning systems 26(8), 1710–1720 (2014)
+126. Lee, C., Kosta, A.K., Zhu, A.Z., Chaney, K., Daniilidis, K., Roy, K.: Spike-flownet:
+     event-based optical flow estimation with energy-efficient hybrid neural networks.
+     In: European Conference on Computer Vision. pp. 366–382. Springer (2020)
+127. Lee, M.S., Kim, Y.J., Jung, J.H., Park, C.G.: Fusion of events and frames using
+     8-dof warping model for robust feature tracking. In: 2023 IEEE International
+     Conference on Robotics and Automation (ICRA). pp. 834–840 (2023). https:
+     //doi.org/10.1109/ICRA48891.2023.10161098
+128. Li, H., Wang, J., Yuan, J., Li, Y., Weng, W., Peng, Y., Zhang, Y., Xiong, Z.,
+     Sun, X.: Event-assisted low-light video object segmentation. In: Proceedings of
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+                                                     Event Cameras: A Survey          23
+
+     the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp.
+     3250–3259 (2024)
+129. Li, H., Liu, H., Ji, X., Li, G., Shi, L.: Cifar10-dvs: an event-stream dataset for
+     object classification. Frontiers in neuroscience 11, 309 (2017)
+130. Li, J., Li, J., Zhu, L., Xiang, X., Huang, T., Tian, Y.: Asynchronous spatio-
+     temporal memory network for continuous event-based object detection. IEEE
+     Transactions on Image Processing 31, 2975–2987 (2022). https://doi.org/10.
+     1109/TIP.2022.3162962
+131. Li, S., Feng, Y., Li, Y., Jiang, Y., Zou, C., Gao, Y.: Event stream super-resolution
+     via spatiotemporal constraint learning. In: Proceedings of the IEEE/CVF Inter-
+     national Conference on Computer Vision. pp. 4480–4489 (2021)
+132. Li, S., Zhou, Z., Xue, Z., Li, Y., Du, S., Gao, Y.: 3d feature tracking via event
+     camera. In: Proceedings of the IEEE/CVF Conference on Computer Vision and
+     Pattern Recognition. pp. 18974–18983 (2024)
+133. Li, Y., Zhou, H., Yang, B., Zhang, Y., Cui, Z., Bao, H., Zhang, G.: Graph-based
+     asynchronous event processing for rapid object recognition. In: Proceedings of the
+     IEEE/CVF International Conference on Computer Vision. pp. 934–943 (2021)
+134. Liang, G., Chen, K., Li, H., Lu, Y., Wang, L.: Towards robust event-guided low-
+     light image enhancement: A large-scale real-world event-image dataset and novel
+     approach. In: Proceedings of the IEEE/CVF Conference on Computer Vision and
+     Pattern Recognition. pp. 23–33 (2024)
+135. Liang, J., Yang, Y., Li, B., Duan, P., Xu, Y., Shi, B.: Coherent event guided
+     low-light video enhancement. In: Proceedings of the IEEE/CVF International
+     Conference on Computer Vision. pp. 10615–10625 (2023)
+136. Liao, W., Zhang, X., Yu, L., Lin, S., Yang, W., Qiao, N.: Synthetic aperture
+     imaging with events and frames. In: 2022 IEEE/CVF Conference on Computer
+     Vision and Pattern Recognition (CVPR). pp. 17714–17723 (2022). https://doi.
+     org/10.1109/CVPR52688.2022.01721
+137. Lichtsteiner, P., Posch, C., Delbruck, T.: A 128x128 120 db 15 µs latency asyn-
+     chronous temporal contrast vision sensor. IEEE journal of solid-state circuits
+     43(2), 566–576 (2008)
+138. Lin, S., Ma, Y., Guo, Z., Wen, B.: Dvs-voltmeter: Stochastic process-based event
+     simulator for dynamic vision sensors. In: European Conference on Computer Vi-
+     sion. pp. 578–593. Springer (2022)
+139. Lin, S., Zhang, J., Pan, J., Jiang, Z., Zou, D., Wang, Y., Chen, J., Ren, J.: Learn-
+     ing event-driven video deblurring and interpolation. In: Computer Vision–ECCV
+     2020: 16th European Conference, Glasgow, UK, August 23–28, 2020, Proceedings,
+     Part VIII 16. pp. 695–710. Springer (2020)
+140. Litzenberger, M., Posch, C., Bauer, D., Belbachir, A.N., Schon, P., Kohn, B.,
+     Garn, H.: Embedded vision system for real-time object tracking using an asyn-
+     chronous transient vision sensor. In: 2006 IEEE 12th Digital Signal Processing
+     Workshop & 4th IEEE Signal Processing Education Workshop. pp. 173–178. IEEE
+     (2006)
+141. Liu, C., Qi, X., Lam, E.Y., Wong, N.: Fast classification and action recognition
+     with event-based imaging. IEEE access 10, 55638–55649 (2022)
+142. Liu, D., Parra, A., Chin, T.J.: Globally optimal contrast maximisation for event-
+     based motion estimation. In: Proceedings of the IEEE/CVF Conference on Com-
+     puter Vision and Pattern Recognition. pp. 6349–6358 (2020)
+143. Liu, D., Parra, A., Chin, T.J.: Spatiotemporal registration for event-based visual
+     odometry. In: Proceedings of the IEEE/CVF conference on computer vision and
+     pattern recognition. pp. 4937–4946 (2021)
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+24      B. Chakravarthi et al.
+
+144. Liu, D., Parra, A., Latif, Y., Chen, B., Chin, T.J., Reid, I.: Asynchronous opti-
+     misation for event-based visual odometry. In: 2022 International Conference on
+     Robotics and Automation (ICRA). pp. 9432–9438 (2022). https://doi.org/10.
+     1109/ICRA46639.2022.9811943
+145. Liu, H.C., Zhang, F.L., Marshall, D., Shi, L., Hu, S.M.: High-speed video gener-
+     ation with an event camera. The Visual Computer 33, 749–759 (2017)
+146. Liu, H., Chen, G., Qu, S., Zhang, Y., Li, Z., Knoll, A., Jiang, C.: Tma: Tem-
+     poral motion aggregation for event-based optical flow. In: Proceedings of the
+     IEEE/CVF International Conference on Computer Vision. pp. 9685–9694 (2023)
+147. Liu, H., Peng, S., Zhu, L., Chang, Y., Zhou, H., Yan, L.: Seeing motion at night-
+     time with an event camera. In: Proceedings of the IEEE/CVF Conference on
+     Computer Vision and Pattern Recognition. pp. 25648–25658 (2024)
+148. Liu, M., Delbruck, T.: Edflow: Event driven optical flow camera with keypoint
+     detection and adaptive block matching. IEEE Transactions on Circuits and Sys-
+     tems for Video Technology 32, 1–1 (09 2022). https://doi.org/10.1109/TCSVT.
+     2022.3156653
+149. Liu, P., Chen, G., Li, Z., Tang, H., Knoll, A.: Learning local event-based de-
+     scriptor for patch-based stereo matching. In: 2022 International Conference on
+     Robotics and Automation (ICRA). pp. 412–418 (2022). https://doi.org/10.
+     1109/ICRA46639.2022.9811687
+150. Liu, Y., Deng, Y., Chen, H., Yang, Z.: Video frame interpolation via direct synthe-
+     sis with the event-based reference. In: Proceedings of the IEEE/CVF Conference
+     on Computer Vision and Pattern Recognition. pp. 8477–8487 (2024)
+151. Lou, H., Teng, M., Yang, Y., Shi, B.: All-in-focus imaging from event focal stack.
+     In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+     Recognition (CVPR). pp. 17366–17375 (June 2023)
+152. Low, W.F., Lee, G.H.: Robust e-nerf: Nerf from sparse & noisy events under non-
+     uniform motion. In: Proceedings of the IEEE/CVF International Conference on
+     Computer Vision. pp. 18335–18346 (2023)
+153. Lu, Y., Wang, Z., Liu, M., Wang, H., Wang, L.: Learning spatial-temporal implicit
+     neural representations for event-guided video super-resolution. In: Proceedings of
+     the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp.
+     1557–1567 (2023)
+154. Luo, X., Luo, A., Wang, Z., Lin, C., Zeng, B., Liu, S.: Efficient meshflow and
+     optical flow estimation from event cameras. In: Proceedings of the IEEE/CVF
+     Conference on Computer Vision and Pattern Recognition (CVPR). pp. 19198–
+     19207 (June 2024)
+155. Luo, X., Luo, K., Luo, A., Wang, Z., Tan, P., Liu, S.: Learning optical flow
+     from event camera with rendered dataset. In: Proceedings of the IEEE/CVF
+     International Conference on Computer Vision. pp. 9847–9857 (2023)
+156. Lynn: Dvs-voltmeter (2023), https://github.com/Lynn0306/DVS- Voltmeter,
+     accessed: 2024-07-17
+157. Ma, Q., Paudel, D.P., Chhatkuli, A., Van Gool, L.: Deformable neural radiance
+     fields using rgb and event cameras. In: Proceedings of the IEEE/CVF Interna-
+     tional Conference on Computer Vision. pp. 3590–3600 (2023)
+158. Maashri, A.A., Debole, M., Cotter, M., Chandramoorthy, N., Xiao, Y.,
+     Narayanan, V., Chakrabarti, C.: Accelerating neuromorphic vision algorithms for
+     recognition. In: Proceedings of the 49th annual design automation conference. pp.
+     579–584 (2012)
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+                                                     Event Cameras: A Survey         25
+
+159. Mahlknecht, F., Gehrig, D., Nash, J., Rockenbauer, F.M., Morrell, B., Delaune,
+     J., Scaramuzza, D.: Exploring event camera-based odometry for planetary robots.
+     IEEE Robotics and Automation Letters 7(4), 8651–8658 (2022)
+160. Manderscheid, J., Sironi, A., Bourdis, N., Migliore, D., Lepetit, V.: Speed invari-
+     ant time surface for learning to detect corner points with event-based cameras.
+     In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+     Recognition. pp. 10245–10254 (2019)
+161. Maqueda, A.I., Loquercio, A., Gallego, G., García, N., Scaramuzza, D.: Event-
+     based vision meets deep learning on steering prediction for self-driving cars. In:
+     Proceedings of the IEEE conference on computer vision and pattern recognition.
+     pp. 5419–5427 (2018)
+162. Masuda, M., Sekikawa, Y., Fujii, R., Saito, H.: Neural implicit event generator for
+     motion tracking. In: 2022 International Conference on Robotics and Automation
+     (ICRA). pp. 2200–2206 (2022). https://doi.org/10.1109/ICRA46639.2022.
+     9812142
+163. Mei, H., Wang, Z., Yang, X., Wei, X., Delbruck, T.: Deep polarization recon-
+     struction with pdavis events. In: Proceedings of the IEEE/CVF Conference on
+     Computer Vision and Pattern Recognition (CVPR). pp. 22149–22158 (June 2023)
+164. Mesquida, T., Dampfhoffer, M., Dalgaty, T., Vivet, P., Sironi, A., Posch, C.:
+     G2N2: Lightweight event stream classification with GRU graph neural net-
+     works. In: BMVC 2023 - The 34th British Machine Vision Conference. p. 660.
+     https://proceedings.bmvc2023.org/, Aberdeen, United Kingdom (Nov 2023),
+     https://cea.hal.science/cea-04321175
+165. Messikommer, N., Fang, C., Gehrig, M., Scaramuzza, D.: Data-driven feature
+     tracking for event cameras. In: Proceedings of the IEEE/CVF Conference on
+     Computer Vision and Pattern Recognition. pp. 5642–5651 (2023)
+166. Millerdurai, C., Akada, H., Wang, J., Luvizon, D., Theobalt, C., Golyanik, V.:
+     Eventego3d: 3d human motion capture from egocentric event streams. In: Pro-
+     ceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recog-
+     nition. pp. 1186–1195 (2024)
+167. Mitrokhin, A., Fermüller, C., Parameshwara, C., Aloimonos, Y.: Event-based
+     moving object detection and tracking. In: 2018 IEEE/RSJ International Con-
+     ference on Intelligent Robots and Systems (IROS). pp. 1–9. IEEE (2018)
+168. Mitrokhin, A., Hua, Z., Fermuller, C., Aloimonos, Y.: Learning visual motion
+     segmentation using event surfaces. In: Proceedings of the IEEE/CVF Conference
+     on Computer Vision and Pattern Recognition. pp. 14414–14423 (2020)
+169. Mitrokhin, A., Ye, C., Fermüller, C., Aloimonos, Y., Delbruck, T.: Ev-imo: Motion
+     segmentation dataset and learning pipeline for event cameras. In: 2019 IEEE/RSJ
+     International Conference on Intelligent Robots and Systems (IROS). pp. 6105–
+     6112. IEEE (2019)
+170. Mollica, G., Felicioni, S., Legittimo, M., Meli, L., Costante, G., Valigi, P.: Ma-
+     vied: A multisensor automotive visual inertial event dataset. IEEE Transactions
+     on Intelligent Transportation Systems 25(1), 214–224 (2024). https://doi.org/
+     10.1109/TITS.2023.3312355
+171. Mostafavi, M., Yoon, K.J., Choi, J.: Event-intensity stereo: Estimating depth by
+     the best of both worlds. In: Proceedings of the IEEE/CVF International Confer-
+     ence on Computer Vision. pp. 4258–4267 (2021)
+172. Mueggler, E., Forster, C., Baumli, N., Gallego, G., Scaramuzza, D.: Lifetime es-
+     timation of events from dynamic vision sensors. In: 2015 IEEE international con-
+     ference on Robotics and Automation (ICRA). pp. 4874–4881. IEEE (2015)
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+26      B. Chakravarthi et al.
+
+173. Mueggler, E., Gallego, G., Scaramuzza, D.: Continuous-time trajectory estimation
+     for event-based vision sensors. In: Robotics: Science and Systems XI (2015)
+174. Mueggler, E., Huber, B., Scaramuzza, D.: Event-based, 6-dof pose tracking for
+     high-speed maneuvers. In: 2014 IEEE/RSJ International Conference on Intelligent
+     Robots and Systems. pp. 2761–2768. IEEE (2014)
+175. Mueggler, E., Rebecq, H., Gallego, G., Delbruck, T., Scaramuzza, D.: The event-
+     camera dataset and simulator: Event-based data for pose estimation, visual odom-
+     etry, and slam. The International Journal of Robotics Research 36(2), 142–149
+     (2017)
+176. Muglikar, M., Bauersfeld, L., Moeys, D.P., Scaramuzza, D.: Event-based shape
+     from polarization. In: Proceedings of the IEEE/CVF Conference on Computer
+     Vision and Pattern Recognition. pp. 1547–1556 (2023)
+177. Nagaraj, M., Liyanagedera, C.M., Roy, K.: Dotie - detecting objects through
+     temporal isolation of events using a spiking architecture. In: 2023 IEEE Interna-
+     tional Conference on Robotics and Automation (ICRA). pp. 4858–4864 (2023).
+     https://doi.org/10.1109/ICRA48891.2023.10161164
+178. Nagata, J., Sekikawa, Y., Hara, K., Suzuki, T., Aoki, Y.: Qr-code reconstruc-
+     tion from event data via optimization in code subspace. In: Proceedings of the
+     IEEE/CVF Winter Conference on Applications of Computer Vision. pp. 2124–
+     2132 (2020)
+179. Nam, Y., Mostafavi, M., Yoon, K.J., Choi, J.: Stereo depth from events cam-
+     eras: Concentrate and focus on the future. In: Proceedings of the IEEE/CVF
+     Conference on Computer Vision and Pattern Recognition. pp. 6114–6123 (2022)
+180. Ng, M., Cai, X., Foong, S.: Direct angular rate estimation without event motion-
+     compensation at high angular rates. In: 2023 IEEE International Conference on
+     Robotics and Automation (ICRA). pp. 1976–1981 (2023). https://doi.org/10.
+     1109/ICRA48891.2023.10160967
+181. Ni, Z., Pacoret, C., Benosman, R., Ieng, S., RÉGNIER*, S.: Asynchronous event-
+     based high speed vision for microparticle tracking. Journal of microscopy 245(3),
+     236–244 (2012)
+182. Nunes, U.M., Demiris, Y.: Kinematic structure estimation of arbitrary artic-
+     ulated rigid objects for event cameras. In: 2022 International Conference on
+     Robotics and Automation (ICRA). pp. 508–514 (2022). https://doi.org/10.
+     1109/ICRA46639.2022.9812430
+183. Nunes, U.M., Perrinet, L.U., Ieng, S.H.: Time-to-contact map by joint estimation
+     of up-to-scale inverse depth and global motion using a single event camera. In:
+     Proceedings of the IEEE/CVF International Conference on Computer Vision. pp.
+     23653–23663 (2023)
+184. Orchard, G., Jayawant, A., Cohen, G.K., Thakor, N.: Converting static image
+     datasets to spiking neuromorphic datasets using saccades. Frontiers in neuro-
+     science 9, 437 (2015)
+185. Osswald, M., Ieng, S.H., Benosman, R., Indiveri, G.: A spiking neural network
+     model of 3d perception for event-based neuromorphic stereo vision systems. Sci-
+     entific reports 7(1), 40703 (2017)
+186. Paikin, G., Ater, Y., Shaul, R., Soloveichik, E.: Efi-net: Video frame interpolation
+     from fusion of events and frames. In: 2021 IEEE/CVF Conference on Computer
+     Vision and Pattern Recognition Workshops (CVPRW). pp. 1291–1301 (2021).
+     https://doi.org/10.1109/CVPRW53098.2021.00142
+187. Pan, L., Hartley, R., Scheerlinck, C., Liu, M., Yu, X., Dai, Y.: High frame rate
+     video reconstruction based on an event camera. IEEE Transactions on Pattern
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+                                                    Event Cameras: A Survey         27
+
+     Analysis and Machine Intelligence 44(5), 2519–2533 (2022). https://doi.org/
+     10.1109/TPAMI.2020.3036667
+188. Pan, L., Liu, M., Hartley, R.: Single image optical flow estimation with an event
+     camera. In: 2020 IEEE/CVF Conference on Computer Vision and Pattern Recog-
+     nition (CVPR). pp. 1669–1678. IEEE (2020)
+189. Pan, L., Scheerlinck, C., Yu, X., Hartley, R., Liu, M., Dai, Y.: Bringing a blurry
+     frame alive at high frame-rate with an event camera. In: Proceedings of the
+     IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 6820–
+     6829 (2019)
+190. Parameshwara, C.M., Sanket, N.J., Singh, C.D., Fermüller, C., Aloimonos, Y.:
+     0-mms: Zero-shot multi-motion segmentation with a monocular event camera. In:
+     2021 IEEE International Conference on Robotics and Automation (ICRA). pp.
+     9594–9600. IEEE (2021)
+191. Paredes-Vallés, F., De Croon, G.C.: Back to event basics: Self-supervised learning
+     of image reconstruction for event cameras via photometric constancy. In: Proceed-
+     ings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition.
+     pp. 3446–3455 (2021)
+192. Paredes-Vallés, F., Scheper, K.Y., De Wagter, C., De Croon, G.C.: Taming con-
+     trast maximization for learning sequential, low-latency, event-based optical flow.
+     In: Proceedings of the IEEE/CVF International Conference on Computer Vision.
+     pp. 9695–9705 (2023)
+193. Peng, X., Wang, Y., Gao, L., Kneip, L.: Globally-optimal event camera motion
+     estimation. In: Computer Vision–ECCV 2020: 16th European Conference, Glas-
+     gow, UK, August 23–28, 2020, Proceedings, Part XXVI 16. pp. 51–67. Springer
+     (2020)
+194. Peng, Y., Li, H., Zhang, Y., Sun, X., Wu, F.: Scene adaptive sparse transformer
+     for event-based object detection. In: Proceedings of the IEEE/CVF Conference
+     on Computer Vision and Pattern Recognition. pp. 16794–16804 (2024)
+195. Peng, Y., Zhang, Y., Xiong, Z., Sun, X., Wu, F.: Get: Group event transformer for
+     event-based vision. In: 2023 IEEE/CVF International Conference on Computer
+     Vision (ICCV). pp. 6015–6025 (2023). https://doi.org/10.1109/ICCV51070.
+     2023.00555
+196. Perot, E., De Tournemire, P., Nitti, D., Masci, J., Sironi, A.: Learning to de-
+     tect objects with a 1 megapixel event camera. Advances in Neural Information
+     Processing Systems 33, 16639–16652 (2020)
+197. Plizzari, C., Planamente, M., Goletto, G., Cannici, M., Gusso, E., Matteucci, M.,
+     Caputo, B.: E2 (go) motion: Motion augmented event stream for egocentric action
+     recognition. In: Proceedings of the IEEE/CVF conference on computer vision and
+     pattern recognition. pp. 19935–19947 (2022)
+198. Ponghiran, W., Liyanagedera, C.M., Roy, K.: Event-based temporally dense op-
+     tical flow estimation with sequential learning. In: Proceedings of the IEEE/CVF
+     International Conference on Computer Vision. pp. 9827–9836 (2023)
+199. Posch, C., Serrano-Gotarredona, T., Linares-Barranco, B., Delbruck, T.:
+     Retinomorphic event-based vision sensors: bioinspired cameras with spiking out-
+     put. Proceedings of the IEEE 102(10), 1470–1484 (2014)
+200. Prophesee: Video to event simulator (2023), https://docs.prophesee.ai/
+     stable/samples/modules/core_ml/viz_video_to_event_simulator.html, ac-
+     cessed: 2024-07-17
+201. Prophesee: Metavision evk3 – genx320 (2024), https://www.prophesee.ai/evk-
+     3-genx320-info/, accessed: 2024-07-18
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+28      B. Chakravarthi et al.
+
+202. Prophesee: Metavision evk3 – hd (2024), https://www.prophesee.ai/event-
+     based-evk-3/, accessed: 2024-07-18
+203. Prophesee: Metavision evk4 – hd (2024), https://www.prophesee.ai/event-
+     camera-evk4/, accessed: 2024-07-18
+204. Prophesee: Metavision sdk (2024), https://docs.prophesee.ai/stable/index.
+     html, accessed: 2024-07-18
+205. Prophesee: Metavision starter kit – amd kria kv260 (2024), https://www.
+     prophesee.ai/event- based- metavision- amd- kria- starter- kit/, accessed:
+     2024-07-18
+206. Prophesee: Metavision starter kit – stm32f7 (genx320) (2024), https://www.
+     prophesee.ai/stm32-genx320-info/, accessed: 2024-07-18
+207. Prophesee: Prophesee | metavision for machines (2024), https://www.prophesee.
+     ai/, accessed: 2024-07-18
+208. Prophesee, Sony: Imx 636 hd (2024), https://www.prophesee.ai/event-based-
+     sensor-imx636-sony-prophesee/, accessed: 2024-07-18
+209. Qi, Y., Zhu, L., Zhang, Y., Li, J.: E2nerf: Event enhanced neural radiance fields
+     from blurry images. In: Proceedings of the IEEE/CVF International Conference
+     on Computer Vision. pp. 13254–13264 (2023)
+210. Qu, D., Yan, C., Wang, D., Yin, J., Chen, Q., Xu, D., Zhang, Y., Zhao, B., Li, X.:
+     Implicit event-rgbd neural slam. In: Proceedings of the IEEE/CVF Conference
+     on Computer Vision and Pattern Recognition. pp. 19584–19594 (2024)
+211. Ramesh, B., Zhang, S., Lee, Z.W., Gao, Z., Orchard, G., Xiang, C.: Long-term
+     object tracking with a moving event camera. In: Bmvc. p. 241 (2018)
+212. Rebecq, H., Gehrig, D., Scaramuzza, D.: Esim: an open event camera simulator.
+     In: Conference on robot learning. pp. 969–982. PMLR (2018)
+213. Rebecq, H., Ranftl, R., Koltun, V., Scaramuzza, D.: Events-to-video: Bringing
+     modern computer vision to event cameras. In: Proceedings of the IEEE/CVF
+     Conference on Computer Vision and Pattern Recognition. pp. 3857–3866 (2019)
+214. Rebecq, H., Ranftl, R., Koltun, V., Scaramuzza, D.: High speed and high dynamic
+     range video with an event camera. IEEE transactions on pattern analysis and
+     machine intelligence 43(6), 1964–1980 (2019)
+215. Ren, H., Zhu, J., Zhou, Y., Fu, H., Huang, Y., Cheng, B.: A simple and effective
+     point-based network for event camera 6-dofs pose relocalization. In: Proceedings
+     of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp.
+     18112–18121 (2024)
+216. Rogister, P., Benosman, R., Ieng, S.H., Lichtsteiner, P., Delbruck, T.: Asyn-
+     chronous event-based binocular stereo matching. IEEE Transactions on Neural
+     Networks and Learning Systems 23(2), 347–353 (2011)
+217. Rudnev, V., Elgharib, M., Theobalt, C., Golyanik, V.: Eventnerf: Neural radi-
+     ance fields from a single colour event camera. In: Proceedings of the IEEE/CVF
+     Conference on Computer Vision and Pattern Recognition. pp. 4992–5002 (2023)
+218. Rudnev, V., Golyanik, V., Wang, J., Seidel, H.P., Mueller, F., Elgharib, M.,
+     Theobalt, C.: Eventhands: Real-time neural 3d hand pose estimation from an
+     event stream–supplementary document–
+219. Safa, A., Van Assche, J., Alea, M.D., Catthoor, F., Gielen, G.G.: Neuromorphic
+     near-sensor computing: from event-based sensing to edge learning. Ieee Micro
+     42(6), 88–95 (2022)
+220. Safa, A., Verbelen, T., Ocket, I., Bourdoux, A., Sahli, H., Catthoor, F., Gielen,
+     G.: Fusing event-based camera and radar for slam using spiking neural networks
+     with continual stdp learning. In: 2023 IEEE International Conference on Robotics
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+                                                     Event Cameras: A Survey         29
+
+     and Automation (ICRA). pp. 2782–2788 (2023). https://doi.org/10.1109/
+     ICRA48891.2023.10160681
+221. Salvatore, N., Fletcher, J.: Learned event-based visual perception for improved
+     space object detection. In: Proceedings of the IEEE/CVF Winter Conference on
+     Applications of Computer Vision. pp. 2888–2897 (2022)
+222. Schaefer, S., Gehrig, D., Scaramuzza, D.: Aegnn: Asynchronous event-based graph
+     neural networks. In: Proceedings of the IEEE/CVF conference on computer vision
+     and pattern recognition. pp. 12371–12381 (2022)
+223. Schaefer, S., Gehrig, D., Scaramuzza, D.: Aegnn: Asynchronous event-based graph
+     neural networks. In: IEEE Conference on Computer Vision and Pattern Recogni-
+     tion (2022)
+224. Scheerlinck, C., Rebecq, H., Gehrig, D., Barnes, N., Mahony, R., Scaramuzza,
+     D.: Fast image reconstruction with an event camera. In: Proceedings of the
+     IEEE/CVF Winter Conference on Applications of Computer Vision. pp. 156–163
+     (2020)
+225. Schraml, S., Belbachir, A.N., Milosevic, N., Schön, P.: Dynamic stereo vision sys-
+     tem for real-time tracking. In: Proceedings of 2010 IEEE International Symposium
+     on Circuits and Systems. pp. 1409–1412. IEEE (2010)
+226. Sekikawa, Y., Nagata, J.: Live demonstration: Tangentially elongated gaussian
+     belief propagation for event-based incremental optical flow estimation. In: 2023
+     IEEE/CVF Conference on Computer Vision and Pattern Recognition Workshops
+     (CVPRW). pp. 3931–3932 (2023). https://doi.org/10.1109/CVPRW59228.2023.
+     00408
+227. SensorsINI: v2e: A simulator for event-based vision (2023), https://github.com/
+     SensorsINI/v2e, accessed: 2024-07-17
+228. Seok, H., Lim, J.: Robust feature tracking in dvs event stream using bézier map-
+     ping. In: Proceedings of the IEEE/CVF Winter Conference on Applications of
+     Computer Vision. pp. 1658–1667 (2020)
+229. Serrano-Gotarredona, T., Linares-Barranco, B.: Poker-dvs and mnist-dvs. their
+     history, how they were made, and other details. Frontiers in neuroscience 9, 481
+     (2015)
+230. Shah, S., Chan, M.A., Cai, H., Chen, J., Kulshrestha, S., Singh, C.D., Aloimonos,
+     Y., Metzler, C.A.: Codedevents: Optimal point-spread-function engineering for
+     3d-tracking with event cameras. In: Proceedings of the IEEE/CVF Conference
+     on Computer Vision and Pattern Recognition. pp. 25265–25275 (2024)
+231. Shi, D., Jing, L., Li, R., Liu, Z., Wang, L., Xu, H., Zhang, Y.: Improved event-
+     based dense depth estimation via optical flow compensation. In: 2023 IEEE Inter-
+     national Conference on Robotics and Automation (ICRA). pp. 4902–4908 (2023).
+     https://doi.org/10.1109/ICRA48891.2023.10160605
+232. Shiba, S., Aoki, Y., Gallego, G.: Secrets of event-based optical flow. In: European
+     Conference on Computer Vision. pp. 628–645. Springer (2022)
+233. Shiba, S., Klose, Y., Aoki, Y., Gallego, G.: Secrets of event-based optical flow,
+     depth, and ego-motion by contrast maximization. IEEE Trans. Pattern Anal.
+     Mach. Intell. (T-PAMI) pp. 1–18 (2024). https://doi.org/10.1109/TPAMI.
+     2024.3396116
+234. Simulator, C.: Carla simulator dvs camera (2023), https://carla.readthedocs.
+     io/en/latest/ref_sensors/#dvs-camera, accessed: 2024-07-17
+235. Sironi, A., Brambilla, M., Bourdis, N., Lagorce, X., Benosman, R.: Hats: His-
+     tograms of averaged time surfaces for robust event-based object classification. In:
+     Proceedings of the IEEE conference on computer vision and pattern recognition.
+     pp. 1731–1740 (2018)
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+30      B. Chakravarthi et al.
+
+236. Sony, Prophesee: Imx 636 event-based sensor (2024), https://www.prophesee.
+     ai/event-based-sensor-imx636-sony-prophesee/, accessed: 2024-07-18
+237. Van der Spiegel, J., Etienne-Cummings, R., Nishimura, M.: Biologically inspired
+     vision sensors. In: 2002 23rd International Conference on Microelectronics. Pro-
+     ceedings (Cat. No. 02TH8595). vol. 1, pp. 125–131. IEEE (2002)
+238. Sridharan, S., Selvam, S., Roy, K., Raghunathan, A.: Ev-edge: Efficient execution
+     of event-based vision algorithms on commodity edge platforms. arXiv preprint
+     arXiv:2403.15717 (2024)
+239. Stoffregen, T., Gallego, G., Drummond, T., Kleeman, L., Scaramuzza, D.: Event-
+     based motion segmentation by motion compensation. In: Proceedings of the
+     IEEE/CVF International Conference on Computer Vision. pp. 7244–7253 (2019)
+240. Stromatias, E., Soto, M., Serrano-Gotarredona, T., Linares-Barranco, B.: An
+     event-driven classifier for spiking neural networks fed with synthetic or dynamic
+     vision sensor data. Frontiers in neuroscience 11, 350 (2017)
+241. Sun, L., Sakaridis, C., Liang, J., Jiang, Q., Yang, K., Sun, P., Ye, Y., Wang, K.,
+     Gool, L.V.: Event-based fusion for motion deblurring with cross-modal attention.
+     In: European conference on computer vision. pp. 412–428. Springer (2022)
+242. Sun, L., Sakaridis, C., Liang, J., Sun, P., Cao, J., Zhang, K., Jiang, Q., Wang, K.,
+     Van Gool, L.: Event-based frame interpolation with ad-hoc deblurring. In: Pro-
+     ceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recog-
+     nition. pp. 18043–18052 (2023)
+243. Sun, Z., Messikommer, N., Gehrig, D., Scaramuzza, D.: Ess: Learning event-based
+     semantic segmentation from still images. In: European Conference on Computer
+     Vision. pp. 341–357. Springer (2022)
+244. Systems, N.: Iebcs: Icns event based camera simulator (2023), https://github.
+     com/neuromorphicsystems/IEBCS, accessed: 2024-07-17
+245. Ta, K., Bruggemann, D., Brödermann, T., Sakaridis, C., Van Gool, L.: L2e: Lasers
+     to events for 6-dof extrinsic calibration of lidars and event cameras. In: 2023 IEEE
+     International Conference on Robotics and Automation (ICRA). pp. 11425–11431
+     (2023). https://doi.org/10.1109/ICRA48891.2023.10161220
+246. Tan, G., Wang, Y., Han, H., Cao, Y., Wu, F., Zha, Z.J.: Multi-grained
+     spatio-temporal features perceived network for event-based lip-reading. In: 2022
+     IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR).
+     pp. 20062–20071 (2022). https://doi.org/10.1109/CVPR52688.2022.01946
+247. Tan, G., Wang, Y., Han, H., Cao, Y., Wu, F., Zha, Z.J.: Multi-grained spatio-
+     temporal features perceived network for event-based lip-reading. In: Proceedings
+     of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp.
+     20094–20103 (2022)
+248. Tomy, A., Paigwar, A., Mann, K.S., Renzaglia, A., Laugier, C.: Fusing event-based
+     and rgb camera for robust object detection in adverse conditions. In: 2022 Inter-
+     national Conference on Robotics and Automation (ICRA). pp. 933–939 (2022).
+     https://doi.org/10.1109/ICRA46639.2022.9812059
+249. Tulyakov, S., Bochicchio, A., Gehrig, D., Georgoulis, S., Li, Y., Scaramuzza, D.:
+     Time lens++: Event-based frame interpolation with parametric non-linear flow
+     and multi-scale fusion. In: Proceedings of the IEEE/CVF Conference on Com-
+     puter Vision and Pattern Recognition. pp. 17755–17764 (2022)
+250. Tulyakov, S., Fleuret, F., Kiefel, M., Gehler, P., Hirsch, M.: Learning an event
+     sequence embedding for dense event-based deep stereo. In: Proceedings of the
+     IEEE/CVF International Conference on Computer Vision. pp. 1527–1537 (2019)
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+                                                     Event Cameras: A Survey         31
+
+251. Tulyakov, S., Gehrig, D., Georgoulis, S., Erbach, J., Gehrig, M., Li, Y., Scara-
+     muzza, D.: Time lens: Event-based video frame interpolation. In: Proceedings
+     of the IEEE/CVF conference on computer vision and pattern recognition. pp.
+     16155–16164 (2021)
+252. Verma, A.A., Chakravarthi, B., Vaghela, A., Wei, H., Yang, Y.: etram: Event-
+     based traffic monitoring dataset. In: Proceedings of the IEEE/CVF Conference
+     on Computer Vision and Pattern Recognition. pp. 22637–22646 (2024)
+253. Vogelstein, R.J., Mallik, U., Culurciello, E., Cauwenberghs, G., Etienne-
+     Cummings, R.: A multichip neuromorphic system for spike-based visual infor-
+     mation processing. Neural computation 19(9), 2281–2300 (2007)
+254. Wan, Z., Wang, Y., Tan, G., Cao, Y., Zha, Z.J.: S2n: Suppression-strengthen
+     network for event-based recognition under variant illuminations. In: European
+     Conference on Computer Vision. pp. 716–733. Springer (2022)
+255. Wan, Z., Mao, Y., Zhang, J., Dai, Y.: Rpeflow: Multimodal fusion of rgb-
+     pointcloud-event for joint optical flow and scene flow estimation. In: 2023
+     IEEE/CVF International Conference on Computer Vision (ICCV). pp. 9996–
+     10006 (2023). https://doi.org/10.1109/ICCV51070.2023.00920
+256. Wang, J., Weng, W., Zhang, Y., Xiong, Z.: Unsupervised video deraining with
+     an event camera. In: Proceedings of the IEEE/CVF International Conference on
+     Computer Vision. pp. 10831–10840 (2023)
+257. Wang, L., Chae, Y., Yoon, S.H., Kim, T.K., Yoon, K.J.: Evdistill: Asynchronous
+     events to end-task learning via bidirectional reconstruction-guided cross-modal
+     knowledge distillation. In: Proceedings of the IEEE/CVF Conference on Com-
+     puter Vision and Pattern Recognition. pp. 608–619 (2021)
+258. Wang, L., Ho, Y.S., Yoon, K.J., et al.: Event-based high dynamic range image
+     and very high frame rate video generation using conditional generative adversarial
+     networks. In: Proceedings of the IEEE/CVF Conference on Computer Vision and
+     Pattern Recognition. pp. 10081–10090 (2019)
+259. Wang, L., Kim, T.K., Yoon, K.J.: Eventsr: From asynchronous events to image
+     reconstruction, restoration, and super-resolution via end-to-end adversarial learn-
+     ing. In: Proceedings of the IEEE/CVF conference on computer vision and pattern
+     recognition. pp. 8315–8325 (2020)
+260. Wang, Q., Zhang, Y., Yuan, J., Lu, Y.: Space-time event clouds for gesture recog-
+     nition: From rgb cameras to event cameras. In: 2019 IEEE Winter Conference on
+     Applications of Computer Vision (WACV). pp. 1826–1835. IEEE (2019)
+261. Wang, X., Wang, S., Tang, C., Zhu, L., Jiang, B., Tian, Y., Tang, J.: Event
+     stream-based visual object tracking: A high-resolution benchmark dataset and a
+     novel baseline. In: Proceedings of the IEEE/CVF Conference on Computer Vision
+     and Pattern Recognition. pp. 19248–19257 (2024)
+262. Wang, Y., Du, B., Shen, Y., Wu, K., Zhao, G., Sun, J., Wen, H.: Ev-gait: Event-
+     based robust gait recognition using dynamic vision sensors. In: Proceedings of the
+     IEEE/CVF conference on computer vision and pattern recognition. pp. 6358–6367
+     (2019)
+263. Wang, Y., Idoughi, R., Heidrich, W.: Stereo event-based particle tracking ve-
+     locimetry for 3d fluid flow reconstruction. In: Computer Vision–ECCV 2020:
+     16th European Conference, Glasgow, UK, August 23–28, 2020, Proceedings, Part
+     XXIX 16. pp. 36–53. Springer (2020)
+264. Wang, Z., Ng, Y., Scheerlinck, C., Mahony, R.: An asynchronous kalman filter for
+     hybrid event cameras. In: Proceedings of the IEEE/CVF International Conference
+     on Computer Vision. pp. 448–457 (2021)
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+32      B. Chakravarthi et al.
+
+265. Wang, Z., Yuan, D., Ng, Y., Mahony, R.: A linear comb filter for event flicker
+     removal. In: 2022 International Conference on Robotics and Automation (ICRA).
+     pp. 398–404 (2022). https://doi.org/10.1109/ICRA46639.2022.9812003
+266. Weikersdorfer, D., Adrian, D.B., Cremers, D., Conradt, J.: Event-based 3d slam
+     with a depth-augmented dynamic vision sensor. In: 2014 IEEE international con-
+     ference on robotics and automation (ICRA). pp. 359–364. IEEE (2014)
+267. Weikersdorfer, D., Hoffmann, R., Conradt, J.: Simultaneous localization and map-
+     ping for event-based vision systems. In: Computer Vision Systems: 9th Interna-
+     tional Conference, ICVS 2013, St. Petersburg, Russia, July 16-18, 2013. Proceed-
+     ings 9. pp. 133–142. Springer (2013)
+268. Weng, W., Zhang, Y., Xiong, Z.: Event-based video reconstruction using trans-
+     former. In: Proceedings of the IEEE/CVF International Conference on Computer
+     Vision. pp. 2563–2572 (2021)
+269. Weng, W., Zhang, Y., Xiong, Z.: Event-based blurry frame interpolation under
+     blind exposure. In: Proceedings of the IEEE/CVF Conference on Computer Vision
+     and Pattern Recognition. pp. 1588–1598 (2023)
+270. Wu, S., You, K., He, W., Yang, C., Tian, Y., Wang, Y., Zhang, Z., Liao, J.: Video
+     interpolation by event-driven anisotropic adjustment of optical flow. In: European
+     Conference on Computer Vision. pp. 267–283. Springer (2022)
+271. Wu, Z., Gehrig, M., Lyu, Q., Liu, X., Gilitschenski, I.: Leod: Label-efficient object
+     detection for event cameras. In: Proceedings of the IEEE/CVF Conference on
+     Computer Vision and Pattern Recognition. pp. 16933–16943 (2024)
+272. Xu, F., Yu, L., Wang, B., Yang, W., Xia, G.S., Jia, X., Qiao, Z., Liu, J.: Mo-
+     tion deblurring with real events. In: Proceedings of the IEEE/CVF International
+     Conference on Computer Vision. pp. 2583–2592 (2021)
+273. Xu, H., Peng, P., Tan, G., Li, Y., Xu, X., Tian, Y.: Dmr: Decomposed multi-
+     modality representations for frames and events fusion in visual reinforcement
+     learning. In: Proceedings of the IEEE/CVF Conference on Computer Vision and
+     Pattern Recognition. pp. 26508–26518 (2024)
+274. Xu, L., Xu, W., Golyanik, V., Habermann, M., Fang, L., Theobalt, C.: Event-
+     cap: Monocular 3d capture of high-speed human motions using an event camera.
+     In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+     Recognition. pp. 4968–4978 (2020)
+275. Yang, Y., Han, J., Liang, J., Sato, I., Shi, B.: Learning event guided high dy-
+     namic range video reconstruction. In: Proceedings of the IEEE/CVF Conference
+     on Computer Vision and Pattern Recognition. pp. 13924–13934 (2023)
+276. Yang, Y., Liang, J., Yu, B., Chen, Y., Ren, J.S., Shi, B.: Latency correc-
+     tion for event-guided deblurring and frame interpolation. In: Proceedings of the
+     IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 24977–
+     24986 (2024)
+277. Yao, M., Gao, H., Zhao, G., Wang, D., Lin, Y., Yang, Z., Li, G.: Temporal-wise
+     attention spiking neural networks for event streams classification. In: Proceedings
+     of the IEEE/CVF International Conference on Computer Vision. pp. 10221–10230
+     (2021)
+278. Yasin, J.N., Mohamed, S.A.S., Haghbayan, M.h., Heikkonen, J., Tenhunen, H.,
+     Yasin, M.M., Plosila, J.: Night vision obstacle detection and avoidance based on
+     bio-inspired vision sensors. In: 2020 IEEE SENSORS. pp. 1–4 (2020). https:
+     //doi.org/10.1109/SENSORS47125.2020.9278914
+279. Ye, C., Mitrokhin, A., Fermüller, C., Yorke, J.A., Aloimonos, Y.: Unsupervised
+     learning of dense optical flow, depth and egomotion with event-based sensors.
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+                                                     Event Cameras: A Survey         33
+
+     In: 2020 IEEE/RSJ International Conference on Intelligent Robots and Systems
+     (IROS). pp. 5831–5838. IEEE (2020)
+280. Yu, B., Ren, J., Han, J., Wang, F., Liang, J., Shi, B.: Eventps: Real-time photo-
+     metric stereo using an event camera. In: Proceedings of the IEEE/CVF Confer-
+     ence on Computer Vision and Pattern Recognition. pp. 9602–9611 (2024)
+281. Yu, Z., Zhang, Y., Liu, D., Zou, D., Chen, X., Liu, Y., Ren, J.S.: Training
+     weakly supervised video frame interpolation with events. In: Proceedings of
+     the IEEE/CVF International Conference on Computer Vision. pp. 14589–14598
+     (2021)
+282. Zhang, D., Ding, Q., Duan, P., Zhou, C., Shi, B.: Data association between event
+     streams and intensity frames under diverse baselines. In: European Conference
+     on Computer Vision. pp. 72–90. Springer (2022)
+283. Zhang, J., Dong, B., Zhang, H., Ding, J., Heide, F., Yin, B., Yang, X.: Spik-
+     ing transformers for event-based single object tracking. In: Proceedings of the
+     IEEE/CVF conference on Computer Vision and Pattern Recognition. pp. 8801–
+     8810 (2022)
+284. Zhang, J., Wang, Y., Liu, W., Li, M., Bai, J., Yin, B., Yang, X.: Frame-event
+     alignment and fusion network for high frame rate tracking. In: Proceedings of
+     the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp.
+     9781–9790 (2023)
+285. Zhang, J., Yang, X., Fu, Y., Wei, X., Yin, B., Dong, B.: Object tracking by
+     jointly exploiting frame and event domain. In: Proceedings of the IEEE/CVF
+     International Conference on Computer Vision. pp. 13043–13052 (2021)
+286. Zhang, K., Che, K., Zhang, J., Cheng, J., Zhang, Z., Guo, Q., Leng, L.: Discrete
+     time convolution for fast event-based stereo. In: Proceedings of the IEEE/CVF
+     Conference on Computer Vision and Pattern Recognition. pp. 8676–8686 (2022)
+287. Zhang, P., Ge, Z., Song, L., Lam, E.Y.: Neuromorphic imaging with density-
+     based spatiotemporal denoising. IEEE Transactions on Computational Imaging
+     9, 530–541 (2023). https://doi.org/10.1109/TCI.2023.3281202
+288. Zhang, S., Zhang, Y., Jiang, Z., Zou, D., Ren, J., Zhou, B.: Learning to see in the
+     dark with events. In: Computer Vision–ECCV 2020: 16th European Conference,
+     Glasgow, UK, August 23–28, 2020, Proceedings, Part XVIII 16. pp. 666–682.
+     Springer (2020)
+289. Zhang, X., Yu, L.: Unifying motion deblurring and frame interpolation with
+     events. In: Proceedings of the IEEE/CVF Conference on Computer Vision and
+     Pattern Recognition. pp. 17765–17774 (2022)
+290. Zhang, X., Yu, L., Yang, W., Liu, J., Xia, G.S.: Generalizing event-based motion
+     deblurring in real-world scenarios. In: Proceedings of the IEEE/CVF International
+     Conference on Computer Vision. pp. 10734–10744 (2023)
+291. Zhang, Z., Cui, S., Chai, K., Yu, H., Dasgupta, S., Mahbub, U., Rahman, T.: V2ce:
+     Video to continuous events simulator. arXiv preprint arXiv:2309.08891 (2023)
+292. Zhao, C., Li, Y., Lyu, Y.: Event-based real-time moving object detection based
+     on imu ego-motion compensation. In: 2023 IEEE International Conference on
+     Robotics and Automation (ICRA). pp. 690–696 (2023). https://doi.org/10.
+     1109/ICRA48891.2023.10160472
+293. Zheng, X., Wang, L.: Eventdance: Unsupervised source-free cross-modal adapta-
+     tion for event-based object recognition. In: Proceedings of the IEEE/CVF Con-
+     ference on Computer Vision and Pattern Recognition. pp. 17448–17458 (2024)
+294. Zhou, H., Chang, Y., Shi, Z.: Bring event into rgb and lidar: Hierarchical visual-
+     motion fusion for scene flow. In: Proceedings of the IEEE/CVF Conference on
+     Computer Vision and Pattern Recognition. pp. 26477–26486 (2024)
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+34      B. Chakravarthi et al.
+
+295. Zhou, J., Zheng, X., Lyu, Y., Wang, L.: Exact: Language-guided conceptual rea-
+     soning and uncertainty estimation for event-based action recognition and more.
+     In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+     Recognition. pp. 18633–18643 (2024)
+296. Zhou, X., Duan, P., Ma, Y., Shi, B.: Evunroll: Neuromorphic events based rolling
+     shutter image correction. In: 2022 IEEE/CVF Conference on Computer Vision
+     and Pattern Recognition (CVPR). pp. 17754–17763 (2022). https://doi.org/
+     10.1109/CVPR52688.2022.01725
+297. Zhou, Y., Gallego, G., Rebecq, H., Kneip, L., Li, H., Scaramuzza, D.: Semi-dense
+     3d reconstruction with a stereo event camera. In: Proceedings of the European
+     conference on computer vision (ECCV). pp. 235–251 (2018)
+298. Zhou, Y., Gallego, G., Shen, S.: Event-based stereo visual odometry. IEEE Trans-
+     actions on Robotics 37(5), 1433–1450 (2021)
+299. Zhou, Z., Wu, Z., Boutteau, R., Yang, F., Demonceaux, C., Ginhac, D.: Rgb-
+     event fusion for moving object detection in autonomous driving. In: 2023 IEEE
+     International Conference on Robotics and Automation (ICRA). pp. 7808–7815
+     (2023). https://doi.org/10.1109/ICRA48891.2023.10161563
+300. Zhu, A.Z., Thakur, D., Özaslan, T., Pfrommer, B., Kumar, V., Daniilidis, K.:
+     The multivehicle stereo event camera dataset: An event camera dataset for 3d
+     perception. IEEE Robotics and Automation Letters 3(3), 2032–2039 (2018)
+301. Zhu, A.Z., Yuan, L., Chaney, K., Daniilidis, K.: Ev-flownet: Self-supervised optical
+     flow estimation for event-based cameras. arXiv preprint arXiv:1802.06898 (2018)
+302. Zhu, A.Z., Yuan, L., Chaney, K., Daniilidis, K.: Unsupervised event-based learn-
+     ing of optical flow, depth, and egomotion. In: Proceedings of the IEEE/CVF
+     Conference on Computer Vision and Pattern Recognition. pp. 989–997 (2019)
+303. Zhu, L., Wang, X., Chang, Y., Li, J., Huang, T., Tian, Y.: Event-based video
+     reconstruction via potential-assisted spiking neural network. In: Proceedings of
+     the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp.
+     3594–3604 (2022)
+304. Zhu, Z., Hou, J., Wu, D.O.: Cross-modal orthogonal high-rank augmentation for
+     rgb-event transformer-trackers. In: Proceedings of the IEEE/CVF International
+     Conference on Computer Vision. pp. 22045–22055 (2023)
+305. Ziegler, A., Teigland, D., Tebbe, J., Gossard, T., Zell, A.: Real-time event sim-
+     ulation with frame-based cameras. In: 2023 IEEE International Conference on
+     Robotics and Automation (ICRA). pp. 11669–11675 (2023). https://doi.org/
+     10.1109/ICRA48891.2023.10160654
+306. Zihao Zhu, A., Atanasov, N., Daniilidis, K.: Event-based visual inertial odome-
+     try. In: Proceedings of the IEEE Conference on Computer Vision and Pattern
+     Recognition. pp. 5391–5399 (2017)
+307. Zou, S., Guo, C., Zuo, X., Wang, S., Wang, P., Hu, X., Chen, S., Gong, M., Cheng,
+     L.: Eventhpe: Event-based 3d human pose and shape estimation. In: Proceedings
+     of the IEEE/CVF International Conference on Computer Vision. pp. 10996–11005
+     (2021)
+308. Zou, Y., Zheng, Y., Takatani, T., Fu, Y.: Learning to reconstruct high speed
+     and high dynamic range videos from events. In: Proceedings of the IEEE/CVF
+     Conference on Computer Vision and Pattern Recognition. pp. 2024–2033 (2021)
+309. Zubić, N., Gehrig, D., Gehrig, M., Scaramuzza, D.: From chaos comes order: Or-
+     dering event representations for object recognition and detection. In: Proceedings
+     of the IEEE/CVF International Conference on Computer Vision. pp. 12846–12856
+     (2023)
+This paper has been accepted for publication by the ECCV 2024 workshop on
+Neuromorphic Vision: Advantages and Applications of Event Cameras (NeVi).
+
+
+
+
+                                                 Event Cameras: A Survey       35
+
+310. Zubić, N., Gehrig, M., Scaramuzza, D.: State space models for event cameras.
+     In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+     Recognition (CVPR) (2024)
+311. Zuo, Y., Yang, J., Chen, J., Wang, X., Wang, Y., Kneip, L.: Devo: Depth-event
+     camera visual odometry in challenging conditions. In: 2022 International Con-
+     ference on Robotics and Automation (ICRA). pp. 2179–2185 (2022). https:
+     //doi.org/10.1109/ICRA46639.2022.9811805
+

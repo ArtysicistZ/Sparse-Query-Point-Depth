@@ -1,0 +1,113 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand*\HyPL@Entry[1]{}
+\citation{hidalgo2020e2depth,bartolomei2025depthanyevent}
+\citation{das2025f3}
+\citation{yang2024dav2}
+\citation{infinidepth2026}
+\citation{chen2021liif}
+\citation{ranftl2020midas}
+\citation{ranftl2021dpt}
+\citation{yang2024dav2}
+\citation{bhat2023zoedepth}
+\citation{hu2024metric3d}
+\citation{ke2024marigold}
+\citation{piccinelli2024unidepth}
+\citation{hidalgo2020e2depth}
+\citation{shi2015convlstm}
+\citation{bartolomei2025depthanyevent}
+\citation{das2025f3}
+\citation{carion2020detr}
+\citation{zhu2021deformable}
+\citation{kirillov2023sam}
+\citation{jaegle2022perceiverio}
+\HyPL@Entry{0<</S/D>>}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Motivation}{1}{section.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2}Background and Related Work}{1}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{RGB depth foundations.}{1}{section*.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Event-camera depth.}{1}{section*.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Query-based decoders.}{1}{section*.3}\protected@file@percent }
+\citation{das2025f3}
+\citation{woo2023convnextv2,ding2024unireplknet}
+\citation{liu2021swin}
+\citation{bartolomei2025depthanyevent}
+\citation{carion2020detr,kirillov2023sam}
+\citation{zhu2021deformable}
+\citation{jaegle2022perceiverio}
+\citation{bartolomei2025depthanyevent}
+\citation{chen2021liif,kirillov2020pointrend}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Architecture}{2}{section.3}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces EventSPD architecture overview. Phase~A (top) runs once per event window, producing a 4-level feature pyramid and pre-computed KV projections. Phase~B (bottom) runs independently for each of $K$ query pixels: five stages progressively refine a query embedding into a depth prediction. Dashed arrows show feature feeds from Phase~A into Phase~B stages.}}{2}{figure.caption.5}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{fig:arch}{{1}{2}{EventSPD architecture overview. Phase~A (top) runs once per event window, producing a 4-level feature pyramid and pre-computed KV projections. Phase~B (bottom) runs independently for each of $K$ query pixels: five stages progressively refine a query embedding into a depth prediction. Dashed arrows show feature feeds from Phase~A into Phase~B stages}{figure.caption.5}{}}
+\newlabel{fig:arch@cref}{{[figure][1][]1}{[1][2][]2}{}{}{}}
+\@writefile{toc}{\contentsline {paragraph}{Design principles and references.}{2}{section*.6}\protected@file@percent }
+\citation{das2025f3}
+\citation{woo2023convnextv2}
+\citation{ding2024unireplknet}
+\citation{liu2021swin}
+\@writefile{toc}{\contentsline {paragraph}{End-to-end data flow.}{3}{section*.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Key numbers.}{3}{section*.8}\protected@file@percent }
+\citation{bartolomei2025depthanyevent,shi2015convlstm}
+\citation{carion2020detr,kirillov2023sam}
+\citation{zhu2021deformable}
+\@writefile{toc}{\contentsline {paragraph}{Notation conventions.}{4}{section*.15}\protected@file@percent }
+\citation{carion2020detr,kirillov2023sam,jaegle2022perceiverio}
+\citation{zhu2021deformable}
+\citation{zhu2021deformable}
+\citation{carion2020detr,kirillov2023sam}
+\newlabel{eq:depth}{{25}{7}{B5. Fused Cross-Attention + Depth Head}{equation.25}{}}
+\newlabel{eq:depth@cref}{{[equation][25][]25}{[1][7][]7}{}{}{}}
+\citation{zhao2017pspnet,cheng2022mask2former}
+\citation{yang2024dav2}
+\citation{bartolomei2025depthanyevent}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Training}{8}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Loss Functions}{8}{subsection.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Point loss (data fit).}{8}{section*.22}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Scale-invariant log loss (structural).}{8}{section*.23}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Dense backbone auxiliary (training only).}{8}{section*.24}\protected@file@percent }
+\citation{chaney2023m3ed}
+\citation{gehrig2021dsec}
+\citation{zhu2018mvsec}
+\citation{wang2020tartanair}
+\citation{shrivastava2016ohem,lin2017focal}
+\@writefile{toc}{\contentsline {paragraph}{Feature distillation from DAv2 (training only).}{9}{section*.25}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Loss hyperparameters summary.}{9}{section*.26}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Training Data}{9}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Query Sampling}{9}{subsection.4.3}\protected@file@percent }
+\citation{kirillov2020pointrend}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}Training Schedule}{10}{subsection.4.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.5}Regularization}{10}{subsection.4.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}Projected Performance}{10}{section.5}\protected@file@percent }
+\bibstyle{plainnat}
+\bibdata{references_eventspd}
+\bibcite{bartolomei2025depthanyevent}{{1}{2025}{{Bartolomei et~al.}}{{Bartolomei, Mannocci, Tosi, Poggi, and Mattoccia}}}
+\bibcite{bhat2023zoedepth}{{2}{2023}{{Bhat et~al.}}{{Bhat, Birkl, Wofk, Wonka, and M{\"u}ller}}}
+\bibcite{carion2020detr}{{3}{2020}{{Carion et~al.}}{{Carion, Massa, Synnaeve, Usunier, Kirillov, and Zagoruyko}}}
+\bibcite{chaney2023m3ed}{{4}{2023}{{Chaney et~al.}}{{Chaney, Cladera, Wang, Bisulco, Hsieh, Korpela, Kumar, Taylor, and Daniilidis}}}
+\bibcite{chen2021liif}{{5}{2021}{{Chen et~al.}}{{Chen, Liu, and Wang}}}
+\bibcite{cheng2022mask2former}{{6}{2022}{{Cheng et~al.}}{{Cheng, Misra, Schwing, Kirillov, and Girshick}}}
+\bibcite{das2025f3}{{7}{2025}{{Das et~al.}}{{Das, Daniilidis, and Chaudhari}}}
+\bibcite{ding2024unireplknet}{{8}{2024}{{Ding et~al.}}{{Ding, Zhang, Ge, Zhao, Song, Yue, and Shan}}}
+\bibcite{gehrig2021dsec}{{9}{2021}{{Gehrig et~al.}}{{Gehrig, Aarents, Gehrig, and Scaramuzza}}}
+\bibcite{hidalgo2020e2depth}{{10}{2020}{{Hidalgo-Carri{\'o} et~al.}}{{Hidalgo-Carri{\'o}, Gehrig, and Scaramuzza}}}
+\bibcite{hu2024metric3d}{{11}{2024}{{Hu et~al.}}{{Hu, Yin, Zhang, Cai, Long, Wang, Chen, Yu, Shen, and Shen}}}
+\bibcite{infinidepth2026}{{12}{2026}{{InfiniDepth Authors}}{{}}}
+\bibcite{jaegle2022perceiverio}{{13}{2022}{{Jaegle et~al.}}{{Jaegle, Borgeaud, Alayrac, Doersch, Ionescu, Ding, Koppula, Zoran, Brock, Shelhamer, H{\'e}naff, Botvinick, Zisserman, Vinyals, and Carreira}}}
+\bibcite{ke2024marigold}{{14}{2024}{{Ke et~al.}}{{Ke, Obukhov, Huang, Mez, Dauber, and Schindler}}}
+\bibcite{kirillov2020pointrend}{{15}{2020}{{Kirillov et~al.}}{{Kirillov, Wu, He, and Girshick}}}
+\bibcite{kirillov2023sam}{{16}{2023}{{Kirillov et~al.}}{{Kirillov, Mintun, Ravi, Mao, Rolland, Gustafson, Xiao, Whitehead, Berg, Lo, Doll{\'a}r, and Girshick}}}
+\bibcite{lin2017focal}{{17}{2017}{{Lin et~al.}}{{Lin, Goyal, Girshick, He, and Doll{\'a}r}}}
+\bibcite{liu2021swin}{{18}{2021}{{Liu et~al.}}{{Liu, Lin, Cao, Hu, Wei, Zhang, Lin, and Guo}}}
+\bibcite{piccinelli2024unidepth}{{19}{2024}{{Piccinelli et~al.}}{{Piccinelli, Yang, Sakaridis, Segu, Li, Van~Gool, and Yu}}}
+\bibcite{ranftl2021dpt}{{20}{2021}{{Ranftl et~al.}}{{Ranftl, Bochkovskiy, and Koltun}}}
+\bibcite{ranftl2020midas}{{21}{2022}{{Ranftl et~al.}}{{Ranftl, Lasinger, Hafner, Schindler, and Koltun}}}
+\bibcite{shi2015convlstm}{{22}{2015}{{Shi et~al.}}{{Shi, Chen, Wang, Yeung, Wong, and Woo}}}
+\bibcite{shrivastava2016ohem}{{23}{2016}{{Shrivastava et~al.}}{{Shrivastava, Gupta, and Girshick}}}
+\bibcite{wang2020tartanair}{{24}{2020}{{Wang et~al.}}{{Wang, Zhu, Wang, Hu, Qiu, Wang, Hu, Kapoor, and Scherer}}}
+\bibcite{woo2023convnextv2}{{25}{2023}{{Woo et~al.}}{{Woo, Debnath, Hu, Chen, Liu, Kweon, and Xie}}}
+\bibcite{yang2024dav2}{{26}{2024}{{Yang et~al.}}{{Yang, Kang, Huang, Zhao, Xu, Feng, and Zhao}}}
+\bibcite{zhao2017pspnet}{{27}{2017}{{Zhao et~al.}}{{Zhao, Shi, Qi, Wang, and Jia}}}
+\bibcite{zhu2018mvsec}{{28}{2018}{{Zhu et~al.}}{{Zhu, Thakur, {\"O}zaslan, Pfrommer, Kumar, and Daniilidis}}}
+\bibcite{zhu2021deformable}{{29}{2021}{{Zhu et~al.}}{{Zhu, Su, Lu, Li, Wang, and Dai}}}
+\gdef \@abspage@last{13}

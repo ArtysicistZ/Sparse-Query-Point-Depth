@@ -1,0 +1,232 @@
+\begin{thebibliography}{29}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Bartolomei et~al.(2025)Bartolomei, Mannocci, Tosi, Poggi, and
+  Mattoccia]{bartolomei2025depthanyevent}
+Luca Bartolomei, Enrico Mannocci, Fabio Tosi, Matteo Poggi, and Stefano
+  Mattoccia.
+\newblock Depth {AnyEvent}: A cross-modal distillation paradigm for event-based
+  monocular depth estimation.
+\newblock In \emph{International Conference on Computer Vision (ICCV)}, 2025.
+
+\bibitem[Bhat et~al.(2023)Bhat, Birkl, Wofk, Wonka, and
+  M{\"u}ller]{bhat2023zoedepth}
+Shariq~Farooq Bhat, Reiner Birkl, Diana Wofk, Peter Wonka, and Matthias
+  M{\"u}ller.
+\newblock {ZoeDepth}: Zero-shot transfer by combining relative and metric
+  depth.
+\newblock \emph{arXiv preprint arXiv:2302.12288}, 2023.
+
+\bibitem[Carion et~al.(2020)Carion, Massa, Synnaeve, Usunier, Kirillov, and
+  Zagoruyko]{carion2020detr}
+Nicolas Carion, Francisco Massa, Gabriel Synnaeve, Nicolas Usunier, Alexander
+  Kirillov, and Sergey Zagoruyko.
+\newblock End-to-end object detection with transformers.
+\newblock In \emph{European Conference on Computer Vision (ECCV)}, 2020.
+
+\bibitem[Chaney et~al.(2023)Chaney, Cladera, Wang, Bisulco, Hsieh, Korpela,
+  Kumar, Taylor, and Daniilidis]{chaney2023m3ed}
+Kenneth Chaney, Fernando Cladera, Ziyun Wang, Anthony Bisulco, M.~Ani Hsieh,
+  Christopher Korpela, Vijay Kumar, Camillo~Jose Taylor, and Kostas Daniilidis.
+\newblock {M3ED}: Multi-robot, multi-sensor, multi-environment event dataset.
+\newblock In \emph{IEEE/CVF Conference on Computer Vision and Pattern
+  Recognition (CVPR) Workshops}, 2023.
+
+\bibitem[Chen et~al.(2021)Chen, Liu, and Wang]{chen2021liif}
+Yinbo Chen, Sifei Liu, and Xiaolong Wang.
+\newblock Learning continuous image representation with local implicit image
+  function.
+\newblock In \emph{IEEE/CVF Conference on Computer Vision and Pattern
+  Recognition (CVPR)}, 2021.
+\newblock Oral.
+
+\bibitem[Cheng et~al.(2022)Cheng, Misra, Schwing, Kirillov, and
+  Girshick]{cheng2022mask2former}
+Bowen Cheng, Ishan Misra, Alexander~G. Schwing, Alexander Kirillov, and Ross
+  Girshick.
+\newblock Masked-attention mask transformer for universal image segmentation.
+\newblock In \emph{IEEE/CVF Conference on Computer Vision and Pattern
+  Recognition (CVPR)}, 2022.
+
+\bibitem[Das et~al.(2025)Das, Daniilidis, and Chaudhari]{das2025f3}
+Richeek Das, Kostas Daniilidis, and Pratik Chaudhari.
+\newblock Fast feature fields ({F}$^3$): A predictive representation of events.
+\newblock \emph{arXiv preprint arXiv:2509.25146}, 2025.
+
+\bibitem[Ding et~al.(2024)Ding, Zhang, Ge, Zhao, Song, Yue, and
+  Shan]{ding2024unireplknet}
+Xiaohan Ding, Yiyuan Zhang, Yixiao Ge, Sijie Zhao, Lin Song, Xiangyu Yue, and
+  Ying Shan.
+\newblock {UniRepLKNet}: A universal perception large-kernel {ConvNet} for
+  audio, video, point cloud, time-series and image recognition.
+\newblock In \emph{IEEE/CVF Conference on Computer Vision and Pattern
+  Recognition (CVPR)}, 2024.
+
+\bibitem[Gehrig et~al.(2021)Gehrig, Aarents, Gehrig, and
+  Scaramuzza]{gehrig2021dsec}
+Mathias Gehrig, Willem Aarents, Daniel Gehrig, and Davide Scaramuzza.
+\newblock {DSEC}: A stereo event camera dataset for driving scenarios.
+\newblock In \emph{IEEE Robotics and Automation Letters (RA-L)}, 2021.
+
+\bibitem[Hidalgo-Carri{\'o} et~al.(2020)Hidalgo-Carri{\'o}, Gehrig, and
+  Scaramuzza]{hidalgo2020e2depth}
+Javier Hidalgo-Carri{\'o}, Daniel Gehrig, and Davide Scaramuzza.
+\newblock Learning monocular dense depth from events.
+\newblock In \emph{International Conference on 3D Vision (3DV)}, 2020.
+
+\bibitem[Hu et~al.(2024)Hu, Yin, Zhang, Cai, Long, Wang, Chen, Yu, Shen, and
+  Shen]{hu2024metric3d}
+Mu~Hu, Wei Yin, Chi Zhang, Zhipeng Cai, Xiaoxiao Long, Kaixuan Wang, Hao Chen,
+  Gang Yu, Chunhua Shen, and Shaojie Shen.
+\newblock {Metric3D} v2: A versatile monocular geometric foundation model for
+  zero-shot metric depth and surface normal estimation.
+\newblock \emph{IEEE Transactions on Pattern Analysis and Machine Intelligence
+  (TPAMI)}, 46\penalty0 (12):\penalty0 10579--10596, 2024.
+
+\bibitem[{InfiniDepth Authors}(2026)]{infinidepth2026}
+{InfiniDepth Authors}.
+\newblock {InfiniDepth}: Continuous depth estimation at arbitrary resolution.
+\newblock \emph{arXiv preprint arXiv:2601.03252}, 2026.
+
+\bibitem[Jaegle et~al.(2022)Jaegle, Borgeaud, Alayrac, Doersch, Ionescu, Ding,
+  Koppula, Zoran, Brock, Shelhamer, H{\'e}naff, Botvinick, Zisserman, Vinyals,
+  and Carreira]{jaegle2022perceiverio}
+Andrew Jaegle, Sebastian Borgeaud, Jean-Baptiste Alayrac, Carl Doersch, Catalin
+  Ionescu, David Ding, Skanda Koppula, Daniel Zoran, Andrew Brock, Evan
+  Shelhamer, Olivier H{\'e}naff, Matthew~M. Botvinick, Andrew Zisserman, Oriol
+  Vinyals, and Jo{\~a}o Carreira.
+\newblock Perceiver {IO}: A general architecture for structured inputs \&
+  outputs.
+\newblock In \emph{International Conference on Learning Representations
+  (ICLR)}, 2022.
+
+\bibitem[Ke et~al.(2024)Ke, Obukhov, Huang, Mez, Dauber, and
+  Schindler]{ke2024marigold}
+Bingxin Ke, Anton Obukhov, Shengyu Huang, Nando Mez, Patrick Dauber, and Konrad
+  Schindler.
+\newblock Repurposing diffusion-based image generators for monocular depth
+  estimation.
+\newblock In \emph{IEEE/CVF Conference on Computer Vision and Pattern
+  Recognition (CVPR)}, 2024.
+
+\bibitem[Kirillov et~al.(2020)Kirillov, Wu, He, and
+  Girshick]{kirillov2020pointrend}
+Alexander Kirillov, Yuxin Wu, Kaiming He, and Ross Girshick.
+\newblock {PointRend}: Image segmentation as rendering.
+\newblock In \emph{IEEE/CVF Conference on Computer Vision and Pattern
+  Recognition (CVPR)}, 2020.
+
+\bibitem[Kirillov et~al.(2023)Kirillov, Mintun, Ravi, Mao, Rolland, Gustafson,
+  Xiao, Whitehead, Berg, Lo, Doll{\'a}r, and Girshick]{kirillov2023sam}
+Alexander Kirillov, Eric Mintun, Nikhila Ravi, Hanzi Mao, Chloe Rolland, Laura
+  Gustafson, Tete Xiao, Spencer Whitehead, Alexander~C. Berg, Wan-Yen Lo, Piotr
+  Doll{\'a}r, and Ross Girshick.
+\newblock Segment anything.
+\newblock In \emph{International Conference on Computer Vision (ICCV)}, 2023.
+
+\bibitem[Lin et~al.(2017)Lin, Goyal, Girshick, He, and
+  Doll{\'a}r]{lin2017focal}
+Tsung-Yi Lin, Priya Goyal, Ross Girshick, Kaiming He, and Piotr Doll{\'a}r.
+\newblock Focal loss for dense object detection.
+\newblock In \emph{International Conference on Computer Vision (ICCV)}, 2017.
+
+\bibitem[Liu et~al.(2021)Liu, Lin, Cao, Hu, Wei, Zhang, Lin, and
+  Guo]{liu2021swin}
+Ze~Liu, Yutong Lin, Yue Cao, Han Hu, Yixuan Wei, Zheng Zhang, Stephen Lin, and
+  Baining Guo.
+\newblock Swin transformer: Hierarchical vision transformer using shifted
+  windows.
+\newblock In \emph{International Conference on Computer Vision (ICCV)}, 2021.
+
+\bibitem[Piccinelli et~al.(2024)Piccinelli, Yang, Sakaridis, Segu, Li,
+  Van~Gool, and Yu]{piccinelli2024unidepth}
+Luigi Piccinelli, Yung-Hsu Yang, Christos Sakaridis, Mattia Segu, Siyuan Li,
+  Luc Van~Gool, and Fisher Yu.
+\newblock {UniDepth}: Universal monocular metric depth estimation.
+\newblock In \emph{IEEE/CVF Conference on Computer Vision and Pattern
+  Recognition (CVPR)}, 2024.
+
+\bibitem[Ranftl et~al.(2021)Ranftl, Bochkovskiy, and Koltun]{ranftl2021dpt}
+Ren{\'e} Ranftl, Alexey Bochkovskiy, and Vladlen Koltun.
+\newblock Vision transformers for dense prediction.
+\newblock In \emph{International Conference on Computer Vision (ICCV)}, 2021.
+
+\bibitem[Ranftl et~al.(2022)Ranftl, Lasinger, Hafner, Schindler, and
+  Koltun]{ranftl2020midas}
+Ren{\'e} Ranftl, Katrin Lasinger, David Hafner, Konrad Schindler, and Vladlen
+  Koltun.
+\newblock Towards robust monocular depth estimation: Mixing datasets for
+  zero-shot cross-dataset transfer.
+\newblock \emph{IEEE Transactions on Pattern Analysis and Machine Intelligence
+  (TPAMI)}, 44\penalty0 (3):\penalty0 1623--1637, 2022.
+
+\bibitem[Shi et~al.(2015)Shi, Chen, Wang, Yeung, Wong, and
+  Woo]{shi2015convlstm}
+Xingjian Shi, Zhourong Chen, Hao Wang, Dit-Yan Yeung, Wai-kin Wong, and
+  Wang-chun Woo.
+\newblock Convolutional {LSTM} network: A machine learning approach for
+  precipitation nowcasting.
+\newblock In \emph{Advances in Neural Information Processing Systems
+  (NeurIPS)}, 2015.
+
+\bibitem[Shrivastava et~al.(2016)Shrivastava, Gupta, and
+  Girshick]{shrivastava2016ohem}
+Abhinav Shrivastava, Abhinav Gupta, and Ross Girshick.
+\newblock Training region-based object detectors with online hard example
+  mining.
+\newblock In \emph{IEEE/CVF Conference on Computer Vision and Pattern
+  Recognition (CVPR)}, 2016.
+
+\bibitem[Wang et~al.(2020)Wang, Zhu, Wang, Hu, Qiu, Wang, Hu, Kapoor, and
+  Scherer]{wang2020tartanair}
+Wenshan Wang, Delong Zhu, Xiangwei Wang, Yaoyu Hu, Yuheng Qiu, Chen Wang, Yafei
+  Hu, Ashish Kapoor, and Sebastian Scherer.
+\newblock {TartanAir}: A dataset to push the limits of visual {SLAM}.
+\newblock In \emph{IEEE/RSJ International Conference on Intelligent Robots and
+  Systems (IROS)}, 2020.
+
+\bibitem[Woo et~al.(2023)Woo, Debnath, Hu, Chen, Liu, Kweon, and
+  Xie]{woo2023convnextv2}
+Sanghyun Woo, Shoubhik Debnath, Ronghang Hu, Xinlei Chen, Zhuang Liu, In~So
+  Kweon, and Saining Xie.
+\newblock {ConvNeXt} {V2}: Co-designing and scaling {ConvNets} with masked
+  autoencoders.
+\newblock In \emph{IEEE/CVF Conference on Computer Vision and Pattern
+  Recognition (CVPR)}, 2023.
+
+\bibitem[Yang et~al.(2024)Yang, Kang, Huang, Zhao, Xu, Feng, and
+  Zhao]{yang2024dav2}
+Lihe Yang, Bingyi Kang, Zilong Huang, Zhen Zhao, Xiaogang Xu, Jiashi Feng, and
+  Hengshuang Zhao.
+\newblock Depth anything {V2}.
+\newblock In \emph{Advances in Neural Information Processing Systems
+  (NeurIPS)}, 2024.
+
+\bibitem[Zhao et~al.(2017)Zhao, Shi, Qi, Wang, and Jia]{zhao2017pspnet}
+Hengshuang Zhao, Jianping Shi, Xiaojuan Qi, Xiaogang Wang, and Jiaya Jia.
+\newblock Pyramid scene parsing network.
+\newblock In \emph{IEEE/CVF Conference on Computer Vision and Pattern
+  Recognition (CVPR)}, 2017.
+
+\bibitem[Zhu et~al.(2018)Zhu, Thakur, {\"O}zaslan, Pfrommer, Kumar, and
+  Daniilidis]{zhu2018mvsec}
+Alex~Zihao Zhu, Dinesh Thakur, Tolga {\"O}zaslan, Bernd Pfrommer, Vijay Kumar,
+  and Kostas Daniilidis.
+\newblock The multi vehicle stereo event camera dataset: An event camera
+  dataset for {3D} perception.
+\newblock \emph{IEEE Robotics and Automation Letters (RA-L)}, 3\penalty0
+  (3):\penalty0 2032--2039, 2018.
+
+\bibitem[Zhu et~al.(2021)Zhu, Su, Lu, Li, Wang, and Dai]{zhu2021deformable}
+Xizhou Zhu, Weijie Su, Lewei Lu, Bin Li, Xiaogang Wang, and Jifeng Dai.
+\newblock Deformable {DETR}: Deformable transformers for end-to-end object
+  detection.
+\newblock In \emph{International Conference on Learning Representations
+  (ICLR)}, 2021.
+\newblock Oral.
+
+\end{thebibliography}

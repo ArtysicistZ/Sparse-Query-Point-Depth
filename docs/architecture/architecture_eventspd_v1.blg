@@ -1,0 +1,46 @@
+This is BibTeX, Version 0.99d (TeX Live 2025)
+Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
+The top-level auxiliary file: architecture_eventspd_v1.aux
+The style file: plainnat.bst
+Database file #1: references_eventspd.bib
+You've used 29 entries,
+            2773 wiz_defined-function locations,
+            710 strings with 11160 characters,
+and the built_in function-call counts, 17454 in all, are:
+= -- 1296
+> -- 1660
+< -- 1
++ -- 554
+- -- 525
+* -- 1582
+:= -- 2787
+add.period$ -- 89
+call.type$ -- 29
+change.case$ -- 262
+chr.to.int$ -- 29
+cite$ -- 58
+duplicate$ -- 674
+empty$ -- 1167
+format.name$ -- 554
+if$ -- 3535
+int.to.chr$ -- 1
+int.to.str$ -- 1
+missing$ -- 29
+newline$ -- 155
+num.names$ -- 116
+pop$ -- 609
+preamble$ -- 1
+purify$ -- 233
+quote$ -- 0
+skip$ -- 524
+stack$ -- 0
+substring$ -- 157
+swap$ -- 52
+text.length$ -- 0
+text.prefix$ -- 0
+top$ -- 0
+type$ -- 319
+warning$ -- 0
+while$ -- 93
+width$ -- 0
+write$ -- 362
