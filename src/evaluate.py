@@ -6,7 +6,7 @@ from data.nyu_dataset import NYUDataset
 def evaluate(model, device):
     model.eval()
     val_ds = NYUDataset(split="validation", K=256)
-    val_loader = DataLoader(val_ds, batch_size=12, shuffle=False, num_workers=4, pin_memory=True)
+    val_loader = DataLoader(val_ds, batch_size=8, shuffle=False, num_workers=4, pin_memory=True)
     total_abs_rel = 0.0
     num_samples = 0
 
@@ -17,7 +17,7 @@ def evaluate(model, device):
             gt_depth = gt_depth.to(device)
 
             with torch.amp.autocast('cuda', dtype=torch.bfloat16):
-                depth, _ = model(image, coords)
+                depth = model(image, coords)
 
             # Per-sample AbsRel: mean over K query points, then accumulate per image
             per_sample = torch.mean(torch.abs(depth - gt_depth) / gt_depth, dim=1)  # [B]

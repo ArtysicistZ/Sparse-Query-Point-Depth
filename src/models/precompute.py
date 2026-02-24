@@ -23,9 +23,11 @@ class PreCompute(nn.Module):
 
         self.wg = nn.Linear(l4_channels, d_model)
 
+        '''
         self.calib_l4 = nn.Linear(l4_channels, 1)
         self.calib_bias = nn.Linear(l4_channels, 1)
-
+        '''
+        
 
     def forward(self, features: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         out = features.copy()
@@ -43,9 +45,11 @@ class PreCompute(nn.Module):
 
         out['g'] = self.wg(L4_flat)  # [B, H*W, d_model]
 
+        '''
         L4_pooled = out['L4'].mean(dim=[2, 3])  # [B, C]
         out['s'] = self.calib_l4(L4_pooled)  # [B, 1]
         out['b'] = self.calib_bias(L4_pooled)  # [B, 1]
+        '''
 
         return out
     
