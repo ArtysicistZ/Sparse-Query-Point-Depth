@@ -2,8 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-W_img = 640
-H_img = 480
+from config import W_IMG as W_img, H_IMG as H_img
 
 class TokenConstructor(nn.Module):
 
