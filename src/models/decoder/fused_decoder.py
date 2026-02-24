@@ -50,6 +50,8 @@ class FusedDecoder(nn.Module):
 
     def __init__(self, d_model: int = 192, n_head: int = 6, num_layers: int = 3):
         super().__init__()
+        self.e_g3 = nn.Parameter(torch.zeros(1, 1, 1, d_model))
+        self.e_g4 = nn.Parameter(torch.zeros(1, 1, 1, d_model))
         self.layers = nn.ModuleList([
             FusedCrossAttnLayer(d_model, n_head) for _ in range(num_layers)
         ])
@@ -58,13 +60,26 @@ class FusedDecoder(nn.Module):
             nn.GELU(),
             nn.Linear(d_model * 2, 1)
         )
+        nn.init.constant_(self.depth_head[-1].bias, 0.916) 
 
-    def forward(self, h: torch.Tensor, fused_tokens: torch.Tensor) -> torch.Tensor:
+
+    def forward(self, h: torch.Tensor, center_tokens: torch.Tensor, top_indices_l4: torch.Tensor, top_indices_l3: torch.Tensor, features: dict) -> torch.Tensor:
         """
         h: [B, K, d] — B3 output
         fused_tokens: [B, K, 123, d] — 91 local + 32 deformable
         Returns: r_q [B, K] — raw depth code (before calibration)
         """
+        
+        _, K, d = h.shape
+
+        g_l4 = features['L4_g'].unsqueeze(1).expand(-1, K, -1, -1) # [B, K, H*W, d]
+        g_l3 = features['L3_g'].unsqueeze(1).expand(-1, K, -1, -1) # [B, K, H*W, d]
+
+        tokens_l4 = g_l4.gather(dim=2, index=top_indices_l4.unsqueeze(-1).expand(-1, -1, -1, d)) + self.e_g4  # [B, K, 10, d]
+        tokens_l3 = g_l3.gather(dim=2, index=top_indices_l3.unsqueeze(-1).expand(-1, -1, -1, d)) + self.e_g3  # [B, K, 20, d]
+
+        fused_tokens = torch.cat([center_tokens, tokens_l3, tokens_l4], dim=2)  # [B, K, 33, d]
+
         for layer in self.layers:
             h = layer(h, fused_tokens)
         return self.depth_head(h).squeeze(-1)  # [B, K]

@@ -14,8 +14,8 @@ class ConvNeXtV2Encoder(nn.Module):
         self.stem = encoder.stem
         self.stages = encoder.stages
 
-        
-    def forward(self, x) -> dict[str, torch.Tensor]:
+
+    def forward_l(self, x) -> dict[str, torch.Tensor]:
         """Forward pass through the first 3 stages"""
         x = self.stem(x)
         L1 = self.stages[0](x)

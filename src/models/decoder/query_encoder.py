@@ -1,3 +1,4 @@
+from matplotlib.pyplot import grid
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -20,6 +21,10 @@ class TokenConstructor(nn.Module):
         self.e_L2 = nn.Parameter(torch.zeros(1, 1, 1, d_model))
         self.e_L3 = nn.Parameter(torch.zeros(1, 1, 1, d_model))
         self.e_L4 = nn.Parameter(torch.zeros(1, 1, 1, d_model))
+
+        self.e_c2 = nn.Parameter(torch.zeros(1, 1, d_model))
+        self.e_c3 = nn.Parameter(torch.zeros(1, 1, d_model))
+        self.e_c4 = nn.Parameter(torch.zeros(1, 1, d_model))
 
         self.w_off = nn.Linear(l1_channels, 8 * 2)
         self.w_loc = nn.Linear(l1_channels + 16, d_model)
@@ -90,8 +95,8 @@ class TokenConstructor(nn.Module):
         l2_token = self.proj_l2(l2_raw) + self.e_L2 + self.rpe[None, None]
         l3_token = l3_raw + self.e_L3 + self.rpe[None, None]
         l4_token = self.proj_l4(l4_raw) + self.e_L4 + self.rpe[self.l4_rpe_idx][None, None]
-
         
+        # L1 tokens with deformable sampling
         stride = 4
         H_feat, W_feat = H_img // stride, W_img // stride
         feat_coords = coords.float() / stride
@@ -135,6 +140,14 @@ class TokenConstructor(nn.Module):
         l1_token = F.gelu(self.w_loc(l1_input)) + self.e_L1  # [B, K, 32, d_model]
 
         final_tokens = torch.cat([l1_token, l2_token, l3_token, l4_token], dim=2)  # [B, K, 91, d_model]
+
+        grid = grid_pts_norm.unsqueeze(2)  # [B, K, 32, 1, 2]
+        
+        cq_2 = F.grid_sample(features['L2_proj'], grid, align_corners=True).squeeze(-1).transpose(1, 2) + self.e_c2  # [B, K, C]
+        cq_3 = F.grid_sample(features['L3_proj'], grid, align_corners=True).squeeze(-1).transpose(1, 2) + self.e_c3  # [B, K, C]
+        cq_4 = F.grid_sample(features['L4_proj'], grid, align_corners=True).squeeze(-1).transpose(1, 2) + self.e_c4  # [B, K, C]
+
+        center_tokens = torch.stack([cq_2, cq_3, cq_4], dim=2)  # [B, K, 3, d_model]
 
         return final_tokens, center_tokens, seed
 
