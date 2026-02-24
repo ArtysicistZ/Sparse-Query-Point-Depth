@@ -3,7 +3,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 
 from models.spd import SPD
-from utils.losses import l_point
+from utils.losses import l_point, l_silog
 from data.nyu_dataset import NYUDataset
 from evaluate import evaluate
 
@@ -29,7 +29,7 @@ def train():
     scaler = torch.amp.GradScaler()
 
     dataset = NYUDataset(split="train", K=256)
-    train_loader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=0)
+    train_loader = DataLoader(dataset, batch_size=12, shuffle=True, num_workers=4, pin_memory=True)
 
     for epoch in range(10):
         model.train()
@@ -42,7 +42,7 @@ def train():
 
             with torch.amp.autocast('cuda', dtype=torch.bfloat16):
                 pred_depth, pred_inv_depth = model(images, coords)
-                loss = l_point(pred_inv_depth, gt_depth)
+                loss = l_point(pred_inv_depth, gt_depth) + 0.5 * l_silog(pred_depth, gt_depth)
 
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)

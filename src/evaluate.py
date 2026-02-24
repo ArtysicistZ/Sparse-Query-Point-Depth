@@ -6,7 +6,7 @@ from data.nyu_dataset import NYUDataset
 def evaluate(model, device):
     model.eval()
     val_ds = NYUDataset(split="validation", K=256)
-    val_loader = DataLoader(val_ds, batch_size=1, shuffle=False)
+    val_loader = DataLoader(val_ds, batch_size=12, shuffle=False, num_workers=4, pin_memory=True)
     total_abs_rel = 0.0
     num_samples = 0
 
@@ -18,12 +18,16 @@ def evaluate(model, device):
 
             with torch.amp.autocast('cuda', dtype=torch.bfloat16):
                 depth, _ = model(image, coords)
-            # Compute metrics (e.g., RMSE, MAE) using output and gt_depth
-            abs_rel = torch.mean(torch.abs(depth - gt_depth) / gt_depth)
 
-            total_abs_rel += abs_rel.item()
-            num_samples += 1
+            # Per-sample AbsRel: mean over K query points, then accumulate per image
+            per_sample = torch.mean(torch.abs(depth - gt_depth) / gt_depth, dim=1)  # [B]
 
-            print(f"Sample {num_samples}, AbsRel: {abs_rel.item():.4f}") if cnt % 100 == 0 else None
+            total_abs_rel += per_sample.sum().item()
+            num_samples += per_sample.shape[0]
+
+            if cnt % 10 == 0:
+                print(f"Sample {num_samples}/{len(val_ds)}, AbsRel: {per_sample.mean().item():.4f}, "
+                      f"pred [{depth.min().item():.2f}, {depth.max().item():.2f}], "
+                      f"gt [{gt_depth.min().item():.2f}, {gt_depth.max().item():.2f}]")
 
     return total_abs_rel / num_samples if num_samples > 0 else float('inf')
