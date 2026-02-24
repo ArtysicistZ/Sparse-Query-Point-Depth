@@ -23,37 +23,42 @@ $$T_{\text{total}}(K) = T_{\text{encode}}(I) + T_{\text{decode}}(K \mid \text{fe
 
 ## 2. Architecture Overview
 
+> **v13.1 revision** (post-Exp 4): Removed B4 deformable read (caused co-adaptation instability and epoch 2–3 regression). Added B3a L3 cross-attention (fills mid-scale global gap). Redesigned B5 tokens: 3 central multi-scale + 20 routed L4 = 23 tokens. Added L3 self-attention (2× FullSelfAttn₃₈₄) between Stage 3 and Stage 4 — gives L3 global context for B3a and feeds globally-informed features into Stage 4. Kept L4 self-attention (2 layers) in neck for B3b routing. 4 total self-attention layers across two resolutions. See [experiments.md](experiments.md) for evidence.
+
 ```
-RGB Image (480×640, NYU native)
+RGB Image (256×320 current / 480×640 target)
   │
   ▼
 ConvNeXt V2-T encoder (ImageNet pre-trained, fine-tuned with 0.1× LR)
-  Stage 1: 120×160×96   (3× ConvNeXt block, stride 4)
-  Stage 2:  60×80×192   (3× ConvNeXt block, stride 8)
-  Stage 3:  30×40×384   (9× ConvNeXt block, stride 16)
-  Stage 4:  15×20×768   (3× ConvNeXt block, stride 32)
+  Stage 1: H/4  × W/4  × 96   (3× ConvNeXt block, stride 4)
+  Stage 2: H/8  × W/8  × 192  (3× ConvNeXt block, stride 8)
+  Stage 3: H/16 × W/16 × 384  (9× ConvNeXt block, stride 16)
+  ├→ 2× FullSelfAttn₃₈₄ on L3  (global context, feeds B3a + Stage 4)
+  Stage 4: H/32 × W/32 × 768  (3× ConvNeXt block, input = L3-enhanced)
   │
   ▼
 Projection Neck (trainable, Conv 1×1 + LN per level)
-  Stage 1 [120×160×96]  → Conv(96→64, k1)  + LN → L1 [120×160×64]
-  Stage 2 [ 60×80×192]  → Conv(192→128, k1) + LN → L2 [ 60×80×128]
-  Stage 3 [ 30×40×384]  → Conv(384→192, k1) + LN → L3 [ 30×40×192]
-  Stage 4 [ 15×20×768]  → Conv(768→384, k1) + LN → 2× FullSelfAttn₃₈₄ → L4 [15×20×384]
+  → L1 [H/4  × W/4  × 64]    stride 4
+  → L2 [H/8  × W/8  × 128]   stride 8
+  → L3 [H/16 × W/16 × 192]   stride 16  (from L3 self-attn output)
+  → 2× FullSelfAttn₃₈₄ → L4 [H/32 × W/32 × 384]   stride 32
   │
   ▼
 Pre-compute (once per image)
-  B3 KV projections, B4 W_V projections, calibration (s, b)
+  B3a L3 KV, B3b L4 KV, wg (L4→d), L2/L3/L4 projections (→d)
   │
   ▼
 Per-query decoder B1–B5 (×K queries in parallel)
-  B1: 91 local tokens + query seed h^(0)
-  B2: 2-layer cross-attn (91 tokens) → h^(2)
-  B3: 2-layer L4 cross-attn (300 tokens) → h^(2)', 32 anchors
-  B4: Deformable read (32 anchors × 72 samples) → 123 fused tokens
-  B5: 3-layer cross-attn (123 tokens) → depth
+  B1:  91 local tokens + query seed h⁰
+  B2:  2L local cross-attn (91 tokens) → h²          [local-aware]
+  B3a: 2L L3 global cross-attn (N_L3 tokens) → h³ᵃ   [mid-scale global]
+  B3b: 2L L4 global cross-attn (N_L4 tokens) → h³ᵇ   [coarse global + top-20 routing]
+  B5:  3L fused cross-attn (23 tokens: 3 central + 20 routed) + depth head → depth
 ```
 
-Core dimension $d = 192$. Encoder channels: [96, 192, 384, 768]. Decoder pyramid channels: [64, 128, 192, 384].
+At 256×320: N_L3 = 320, N_L4 = 80. At 480×640: N_L3 = 1200, N_L4 = 300.
+
+Core dimension $d = 192$. Encoder channels: [96, 192, 384, 768]. Decoder pyramid channels: [64, 128, 192, 384]. 4× self-attention layers (2 L3 + 2 L4).
 
 ---
 
@@ -83,9 +88,12 @@ RGB 480×640×3
   → Stage 2: 3× ConvNeXt V2 block (192ch)                     →  60×80×192   stride 8
   → Down: LN + Conv(192→384, k2, s2)                             30×40×384
   → Stage 3: 9× ConvNeXt V2 block (384ch)                     →  30×40×384   stride 16
+  → **L3 Self-Attn: 2× FullSelfAttn₃₈₄**                     →  30×40×384   (global context)
   → Down: LN + Conv(384→768, k2, s2)                             15×20×768
   → Stage 4: 3× ConvNeXt V2 block (768ch)                     →  15×20×768   stride 32
 ```
+
+Note: The encoder forward pass is split — Stage 3 output goes through L3 self-attention (trainable, decoder LR) before the Stage 3→4 downsample. Stage 4 receives globally-informed L3 features, so L4 inherits global context.
 
 **Why ConvNeXt V2-T over other backbones:**
 - Natural 4-level pyramid at strides [4, 8, 16, 32] — true multi-resolution features (no fake upsampling from single-resolution ViT)
@@ -98,67 +106,105 @@ RGB 480×640×3
 
 ---
 
-## 4. Projection Neck + L4 Self-Attention (trainable)
+## 4. Self-Attention + Projection Neck (trainable)
 
-**Projection neck:** 1×1 convolutions project ConvNeXt channels [96, 192, 384, 768] to decoder channels [64, 128, 192, 384]:
+Two stages of self-attention provide global spatial context that ConvNeXt V2's local 7×7 convolutions cannot:
 
-```
-Stage 1 [120×160×96]  → Conv(96→64,   k1) + LN → L1 [120×160×64]    stride 4
-Stage 2 [ 60×80×192]  → Conv(192→128,  k1) + LN → L2 [ 60×80×128]   stride 8
-Stage 3 [ 30×40×384]  → Conv(384→192,  k1) + LN → L3 [ 30×40×192]   stride 16
-Stage 4 [ 15×20×768]  → Conv(768→384,  k1) + LN → L4_pre [15×20×384] stride 32
-```
+- **L3 self-attention** (2 layers at d=384): Inserted between Stage 3 and Stage 4. Gives L3 tokens global context (for B3a) and feeds globally-informed features into Stage 4 (so L4 inherits global context).
+- **L4 self-attention** (2 layers at d=384): Applied after projection in the neck. Re-establishes explicit global relationships at L4 level, which Stage 4's 3 local conv blocks partially fragment. Critical for B3b routing quality.
 
-**L4 self-attention:** 2× FullSelfAttn₃₈₄ on top of L4_pre. Required for B3 routing — every L4 token must have global scene context.
+**Why 4 total layers (not 2):** ConvNeXt V2's GRN provides channel-wise but NOT spatial global context. 2 layers at a single level is shallow — layer 1 builds pairwise relationships, layer 2 refines, but there's no capacity for complex multi-hop reasoning. 4 layers across two resolutions (L3 stride 16 + L4 stride 32) capture both mid-scale and coarse-scale global spatial patterns. Cost is trivial: ~1.5G MACs at 256×320 (~6.4G at 480×640) for both, vs ~27.5G for the encoder alone.
+
+### 4.1 L3 Self-Attention (between Stage 3 and Stage 4)
 
 ```
-L4_pre [15×20×384, 300 tokens]
-  → FullSelfAttn₃₈₄ layer 1 (6 heads, d_head=64, Pre-LN + FFN 384→1536→384)
+Stage 3 output [H/16 × W/16 × 384, N_L3 tokens]
+  → FullSelfAttn₃₈₄ layer 1 (6 heads, d_head=64, Pre-LN + FFN 384→1536→384, dropout 0.1)
   → FullSelfAttn₃₈₄ layer 2 (same)
-  → L4 [15×20×384, 300 tokens]    ← every token sees all 300 positions
+  → L3_enhanced [H/16 × W/16 × 384]   ← every L3 token sees all positions
+  ├→ projected to L3 [H/16 × W/16 × 192] (via neck)
+  └→ feeds into Stage 4 downsample + blocks → L4_raw [H/32 × W/32 × 768]
 ```
 
-At 300 tokens, full self-attention is trivially cheap (~0.8G MACs, ~0.03ms). ConvNeXt's L4 has only local receptive field from k=7 convolutions — without self-attention, B3 routing would select anchors based on local content only, missing global scene structure.
+At 256×320: N_L3 = 320 tokens. At 480×640: N_L3 = 1,200 tokens. Full self-attention on 320 tokens is trivially cheap (~0.6G MACs per layer).
 
-| Level | Resolution | Channels | Stride | Tokens |
-|-------|:---:|:---:|:---:|:---:|
-| L1 | 120×160 | 64 | 4 | 19,200 |
-| L2 | 60×80 | 128 | 8 | 4,800 |
-| L3 | 30×40 | 192 | 16 | 1,200 |
-| L4 | 15×20 | 384 | 32 | 300 |
+**L3 self-attention params:** 2× (4 × 384² + FFN 384→1536→384 + LayerNorms) = **~3,542K**.
+
+### 4.2 Projection Neck
+
+1×1 convolutions project to decoder channels [64, 128, 192, 384]:
+
+```
+Stage 1 [H/4  × W/4  × 96]         → Conv(96→64,   k1) + LN → L1 [H/4  × W/4  × 64]
+Stage 2 [H/8  × W/8  × 192]        → Conv(192→128,  k1) + LN → L2 [H/8  × W/8  × 128]
+L3_enhanced [H/16 × W/16 × 384]    → Conv(384→192,  k1) + LN → L3 [H/16 × W/16 × 192]
+Stage 4 [H/32 × W/32 × 768]        → Conv(768→384,  k1) + LN → L4_pre [H/32 × W/32 × 384]
+```
 
 **Neck params:** ~6K + ~25K + ~74K + ~296K = **~401K**.
-**L4 self-attention params:** 2× (4 × 384² + FFN 384→1536→384) = **~3,542K**.
-**Neck + L4 self-attn total: ~3,943K (~3.9M)**.
+
+### 4.3 L4 Self-Attention (after projection)
+
+```
+L4_pre [H/32 × W/32 × 384, N_L4 tokens]
+  → FullSelfAttn₃₈₄ layer 1 (6 heads, d_head=64, Pre-LN + FFN 384→1536→384, dropout 0.1)
+  → FullSelfAttn₃₈₄ layer 2 (same)
+  → L4 [H/32 × W/32 × 384]   ← every L4 token sees all positions
+```
+
+At 256×320: N_L4 = 80 tokens. At 480×640: N_L4 = 300 tokens.
+
+**Why L4 self-attn is still needed despite L3 self-attn → Stage 4:** Stage 4 has only 3 blocks of local 7×7 depthwise conv. While L4 inherits global context from L3-enhanced input, the local conv processing fragments explicit global relationships. L4 self-attention cheaply re-establishes direct token-to-token communication (80 or 300 tokens), ensuring B3b routing selects anchors based on full scene structure, not just locally-informed content.
+
+**L4 self-attention params:** 2× (4 × 384² + FFN 384→1536→384 + LayerNorms) = **~3,542K**.
+
+### 4.4 Summary
+
+| Level | Resolution (480×640) | Channels | Stride | Tokens | Self-Attention |
+|-------|:---:|:---:|:---:|:---:|:---|
+| L1 | 120×160 | 64 | 4 | 19,200 | — |
+| L2 | 60×80 | 128 | 8 | 4,800 | — |
+| L3 | 30×40 | 192 | 16 | 1,200 | 2× FullSelfAttn₃₈₄ (before Stage 4) |
+| L4 | 15×20 | 384 | 32 | 300 | 2× FullSelfAttn₃₈₄ (after projection) |
+
+**Section 4 total:** Neck ~401K + L3 self-attn ~3,542K + L4 self-attn ~3,542K = **~7,485K (~7.5M)**.
 
 ---
 
 ## 5. Pre-compute (once per image)
 
 **Input:** Pyramid $\{L_1, L_2, L_3, L_4\}$.
-**Output:** $\text{cache} = \{L_1, L_2, L_3, L_4,\; K^{(1:2)}, V^{(1:2)},\; \hat{L}_2, \hat{L}_3, \hat{L}_4,\; g,\; s, b\}$
+**Output:** $\text{cache} = \{L_1, \ldots, L_4,\; K_{\text{L3}}^{(1:2)}, V_{\text{L3}}^{(1:2)},\; K_{\text{L4}}^{(1:2)}, V_{\text{L4}}^{(1:2)},\; g,\; \hat{L}_2, \hat{L}_3, \hat{L}_4\}$
 
-### 5.1 KV projections for B3
+### 5.1 KV projections for B3b (L4 cross-attention)
 
-Each B3 layer $\ell = 1, 2$ has per-layer $W_K^{(\ell)}, W_V^{(\ell)} \in \mathbb{R}^{d \times 384}$, applied to L4:
+Each B3b layer $\ell = 1, 2$ has per-layer $W_K^{(\ell)}, W_V^{(\ell)} \in \mathbb{R}^{d \times 384}$, applied to L4:
 
-$$K^{(\ell)} = L_4 \, (W_K^{(\ell)})^T, \quad V^{(\ell)} = L_4 \, (W_V^{(\ell)})^T \quad \in \mathbb{R}^{300 \times d}$$
+$$K_{\text{L4}}^{(\ell)} = L_4 \, (W_K^{(\ell)})^T, \quad V_{\text{L4}}^{(\ell)} = L_4 \, (W_V^{(\ell)})^T \quad \in \mathbb{R}^{N_{L4} \times d}$$
 
-Params: $4 \times 384 \times 192 =$ **~296K**.
+$N_{L4} = 80$ at 256×320, $300$ at 480×640. Params: $4 \times 384 \times 192 =$ **~296K**.
 
-### 5.2 Anchor projection for B4
+### 5.1b KV projections for B3a (L3 cross-attention) [NEW]
 
-$W_g \in \mathbb{R}^{d \times 384}$ pre-projects all L4 features for B4 anchor conditioning:
+Each B3a layer $\ell = 1, 2$ has per-layer $W_{K,\text{L3}}^{(\ell)}, W_{V,\text{L3}}^{(\ell)} \in \mathbb{R}^{d \times 192}$, applied to L3:
 
-$$g = L_4 \, W_g^T \quad \in \mathbb{R}^{300 \times d}$$
+$$K_{\text{L3}}^{(\ell)} = L_3 \, (W_{K,\text{L3}}^{(\ell)})^T, \quad V_{\text{L3}}^{(\ell)} = L_3 \, (W_{V,\text{L3}}^{(\ell)})^T \quad \in \mathbb{R}^{N_{L3} \times d}$$
+
+$N_{L3} = 320$ at 256×320, $1200$ at 480×640. L3 channels = 192 = $d$, so projections are square. Params: $4 \times 192 \times 192 =$ **~148K**.
+
+### 5.2 L4 projection for B5 routed tokens
+
+$W_g \in \mathbb{R}^{d \times 384}$ pre-projects all L4 features. B5 gathers from $g$ at routed indices:
+
+$$g = L_4 \, W_g^T \quad \in \mathbb{R}^{N_{L4} \times d}$$
 
 Params: **~74K**.
 
-### 5.3 Per-level $W_V$ for B4 deformable reads
+### 5.3 Per-level projections for B5 central tokens
 
-Value projections pre-applied to feature maps so `grid_sample` reads already-projected $d$-dim features:
+Conv2d $1 \times 1$ projections to $d$-dim feature maps. B5 bilinear-samples these at query coordinates:
 
-$$\hat{L}^{(\ell)} = L^{(\ell)} \, (W_V^{(\ell)})^T \quad \in \mathbb{R}^{H_\ell \times W_\ell \times d}$$
+$$\hat{L}^{(\ell)} = \text{Conv}_{1 \times 1}(L^{(\ell)}) \quad \in \mathbb{R}^{d \times H_\ell \times W_\ell}$$
 
 | Level | Projection | Params |
 |-------|-----------|-------:|
@@ -167,13 +213,11 @@ $$\hat{L}^{(\ell)} = L^{(\ell)} \, (W_V^{(\ell)})^T \quad \in \mathbb{R}^{H_\ell
 | L4 | $384 \to 192$ | ~74K |
 | **Total** | | **~136K** |
 
-### 5.4 Calibration heads
+### ~~5.4 Calibration heads~~ (removed in v13.1)
 
-$$s = \text{softplus}(W_s \cdot \text{MeanPool}(L_4) + b_s), \quad b = W_b \cdot \text{MeanPool}(L_4) + b_b$$
+Replaced by direct log-depth prediction: $\hat{d}_q = \exp(\text{MLP}(h_{\text{fuse}}))$. No per-image scale/bias.
 
-Two linear $\mathbb{R}^{384} \to \mathbb{R}^1$. $\text{softplus}$ ensures positive scale. Params: **~0.8K**.
-
-**Pre-compute total:** ~296K + ~74K + ~136K + ~0.8K = **~507K**.
+**Pre-compute total:** ~296K + ~148K + ~74K + ~136K = **~654K**.
 
 ---
 
@@ -193,14 +237,15 @@ All steps batched over $K$ queries in parallel. Coordinate convention: `F.grid_s
 | $h^{(0)}$ | Query seed: $W_q [f_q^{(1)};\; \text{pe}_q]$ | $d$ |
 | $\mathcal{T}_{\text{unified}}$ | Local tokens (32 L1 + 25 L2 + 25 L3 + 9 L4) | $91 \times d$ |
 | $h^{(2)}$ | B2 output (local-aware query) | $d$ |
-| $h^{(2)'}$ | B3 output (globally-aware query) | $d$ |
-| $\bar{\alpha}_q$ | Head-averaged B3 attention weights | 300 |
-| $R_q$ | Top-32 L4 anchor positions from B3 routing | 32 positions |
-| $h_r$ | Per-anchor deformable evidence (B4 output) | $d$ |
-| $\mathcal{T}_{\text{fused}}$ | $[\mathcal{T}_{\text{unified}};\; h_{r_1}{+}e_{\text{deform}};\; \ldots;\; h_{r_{32}}{+}e_{\text{deform}}]$ | $123 \times d$ |
+| $h^{(3a)}$ | B3a output (mid-scale global-aware query) | $d$ |
+| $h^{(3b)}$ | B3b output (coarse global-aware query) | $d$ |
+| $\bar{\alpha}_q$ | Head-averaged B3b attention weights | $N_{L4}$ |
+| $R_q$ | Top-20 L4 positions from B3b routing | 20 positions |
+| $c_q^{(\ell)}$ | Central token: bilinear sample of $\hat{L}^{(\ell)}$ at $q$ | $d$ |
+| $g_r$ | Routed L4 token: $g[r]$ for $r \in R_q$ | $d$ |
+| $\mathcal{T}_{\text{B5}}$ | $[c_q^{(2)}{+}e_{c2};\; c_q^{(3)}{+}e_{c3};\; c_q^{(4)}{+}e_{c4};\; g_{r_1}{+}e_g;\; \ldots;\; g_{r_{20}}{+}e_g]$ | $23 \times d$ |
 | $h^{(5)}$ | B5 output = $h_{\text{fuse}}$ (final query representation) | $d$ |
-| $r_q$ | Relative depth code: MLP($h_{\text{fuse}}$) | scalar |
-| $\hat{d}_q$ | Predicted depth: $1 / (\text{softplus}(s \cdot r_q + b) + \varepsilon)$ | scalar |
+| $\hat{d}_q$ | Predicted depth: $\exp(\text{MLP}(h_{\text{fuse}}))$ | scalar |
 
 ### 6.1 B1: Feature Extraction + Token Construction
 
@@ -273,95 +318,110 @@ $$h^{(\ell)} \leftarrow h^{(\ell)} + \text{FFN}^{(\ell)}(\text{LN}_{\text{ff}}^{
 
 **B2 params:** 2× per-layer ($W_Q/W_K/W_V/W_O$ ~148K + FFN ~296K) + LNs ~3K = **~891K**.
 
-### 6.3 B3: Global L4 Cross-Attention + Routing (2 layers, 300 tokens)
+### 6.3a B3a: L3 Mid-Scale Global Cross-Attention (2 layers) [NEW in v13.1]
 
-*Enrich $h^{(2)}$ with global scene context from all 300 L4 tokens (each with global RF from L4 self-attention), then route to 32 anchors.*
+*Enrich $h^{(2)}$ with mid-scale global context from all $N_{L3}$ L3 tokens. Fills the information gap between local features (B2, ~7px radius) and coarse global (B3b, stride 32). No routing — purely for enriching h.*
+
+**Motivation:** After B2, h has only local multi-scale features. B3b reads L4 at stride 32 — very coarse. L3 (stride 16) carries mid-scale information: object extent, boundary patterns, relative positioning. These are critical for distinguishing mid-range (3–5m) from far (5–10m) depths.
+
+**2-layer cross-attention into L3** using pre-computed KV from Section 5.1b:
+
+$$h^{(3a)} \leftarrow h^{(2)} + \text{MHCrossAttn}^{(\ell)}(Q{=}\text{LN}_q^{(\ell)}(h),\; K{=}K_{\text{L3}}^{(\ell)},\; V{=}V_{\text{L3}}^{(\ell)})$$
+$$h^{(3a)} \leftarrow h^{(3a)} + \text{FFN}^{(\ell)}(\text{LN}^{(\ell)}(h^{(3a)}))$$
+
+6 heads, $d_{\text{head}} = 32$. All layers use SDPA (no attention weights needed — no routing). $N_{L3} = 320$ at 256×320, $1200$ at 480×640.
+
+**B3a params:** 2× ($W_Q/W_O$ ~74K + FFN ~296K) + LNs ~2K = **~740K** (L3 KV counted in pre-compute).
+
+> **Scalability note:** At 480×640, $N_{L3} = 1200$, which is 4× the L4 token count. Still feasible with shared-KV broadcast and SDPA, but if VRAM is tight, can apply spatial pooling (e.g., 2×2 avg pool → 300 tokens) or route a subset.
+
+### 6.3b B3b: Global L4 Cross-Attention + Routing (2 layers)
+
+*Enrich $h^{(3a)}$ with coarse global scene context from all $N_{L4}$ L4 tokens (each with global RF from L4 self-attention), then route top-20 anchors for B5.*
 
 **2-layer cross-attention into L4** using pre-computed KV from Section 5.1:
 
-$$h^{(2)} \leftarrow h^{(2)} + \text{MHCrossAttn}^{(\ell)}(Q{=}\text{LN}_q^{(\ell)}(h^{(2)}),\; K{=}K^{(\ell)},\; V{=}V^{(\ell)})$$
-$$h^{(2)} \leftarrow h^{(2)} + \text{FFN}^{(\ell)}(\text{LN}^{(\ell)}(h^{(2)}))$$
+$$h^{(3b)} \leftarrow h^{(3a)} + \text{MHCrossAttn}^{(\ell)}(Q{=}\text{LN}_q^{(\ell)}(h),\; K{=}K_{\text{L4}}^{(\ell)},\; V{=}V_{\text{L4}}^{(\ell)})$$
+$$h^{(3b)} \leftarrow h^{(3b)} + \text{FFN}^{(\ell)}(\text{LN}^{(\ell)}(h^{(3b)}))$$
 
 6 heads, $d_{\text{head}} = 32$. Per-query cost is only Q projection + attention + FFN (KV pre-computed).
 
-**Output:** $h^{(2)'} \in \mathbb{R}^d$ — globally-aware query.
+**Output:** $h^{(3b)} \in \mathbb{R}^d$ — globally-aware query.
 
-**Attention-based routing (zero extra params):** Head-average attention weights from B3 layer 2, select top-$R$:
+**Attention-based routing (zero extra params):** Head-average attention weights from B3b layer 2, select top-$R$:
 
-$$\bar{\alpha}_q = \frac{1}{H} \sum_{h=1}^{H} \alpha_{q,h} \quad \in \mathbb{R}^{300}, \quad R_q = \text{Top-}R(\bar{\alpha}_q, R{=}32)$$
+$$\bar{\alpha}_q = \frac{1}{H} \sum_{h=1}^{H} \alpha_{q,h} \quad \in \mathbb{R}^{N_{L4}}, \quad R_q = \text{Top-}R(\bar{\alpha}_q, R{=}20)$$
 
-Each $r \in R_q$ maps to pixel coordinate $\mathbf{p}_r$ via L4 grid geometry (15×20, stride 32). $R = 32$ from 300 = 10.7% selection. Straight-through routing: hard top-R forward, STE backward.
+At 256×320: $R = 20$ from $N_{L4} = 80$ = 25% selection. At 480×640: $R = 20$ from $300$ = 6.7%. Indices used by B5 to gather routed L4 tokens.
 
-**B3 params:** 2× ($W_Q/W_O$ ~74K + FFN ~296K) + LNs ~2K = **~740K** (KV counted in pre-compute).
+**B3b params:** 2× ($W_Q/W_O$ ~74K + FFN ~296K) + LNs ~2K = **~740K** (KV counted in pre-compute).
 
-### 6.4 B4: Deformable Multi-Scale Read + Token Fusion
+### ~~6.4 B4: Deformable Multi-Scale Read~~ (REMOVED in v13.1)
 
-*For each of 32 anchors from B3, predict offsets and importance weights, read from multi-scale pyramid.*
+> **Removed.** B4 caused co-adaptation instability: B3 routing → B4 learned offsets → B5 attention formed a three-way moving target. Evidence:
+> - Exp 3–4: regression at epoch 2–3 (not seen in B1–B3-only Exp 1–2)
+> - B4 bootstrapping problem: early random routing → noisy deformable tokens → B5 learns to ignore them → gradient dies → self-reinforcing loop
+> - B5 token imbalance: 91 local (redundant with B2) outnumbered 32 deformable 3:1
+>
+> Replaced by: B5 central tokens (multi-scale skip connection, stable) + B5 routed L4 tokens (simple gather, no learned offsets). See Section 6.5.
+>
+> **Lookups per query:** reduced from 2,396 (92 B1 + 2,304 B4) to **95** (92 B1 + 3 B5 central).
 
-**Conditioning:**
+### 6.5 B5: Fused Cross-Attention + Depth Head (3 layers, 23 tokens) [v13.1]
 
-$$\Delta\mathbf{p}_r = \mathbf{p}_r - q \quad \text{(anchor-to-query offset in original pixel coords)}$$
-$$u_r = \text{LN}(\text{GELU}(W_u [h^{(2)'};\; g_r;\; \phi(\Delta\mathbf{p}_r)] + b_u)) \quad \in \mathbb{R}^d$$
+*Refine $h^{(3b)}$ through 3 layers of cross-attention over 23 carefully-constructed tokens: 3 multi-scale central tokens (skip connection) + 20 routed L4 tokens (global structural context).*
 
-$g_r = g[\mathbf{p}_r^{(4)}] \in \mathbb{R}^d$ (pre-projected L4 anchor feature from Section 5.2). $\phi$: Fourier encoding (8 freq, 32 dims). Input: $d + d + 32 = 416$.
+#### B5 Token Construction (in SPD forward, no learned params except type embeddings)
 
-**Offset and weight prediction (shared across anchors):**
+**Central tokens (3):** Bilinear sample from pre-computed $\hat{L}^{(\ell)}$ (Section 5.3) at query coordinates. These act as **multi-scale skip connections** — giving B5 direct access to raw features at the query location, bypassing the information compression in B2→B3a→B3b.
 
-$$\Delta p_{r,h,\ell,m} = W^\Delta \, u_r + b^\Delta \quad (d \to H \times L \times M \times 2 = 144)$$
-$$\beta_{r,h,\ell,m} = W^a \, u_r + b^a \quad (d \to H \times L \times M = 72)$$
+$$c_q^{(2)} = \text{BilinearSample}(\hat{L}_2,\; q / s_2) + e_{c2} \quad \in \mathbb{R}^d$$
+$$c_q^{(3)} = \text{BilinearSample}(\hat{L}_3,\; q / s_3) + e_{c3} \quad \in \mathbb{R}^d$$
+$$c_q^{(4)} = \text{BilinearSample}(\hat{L}_4,\; q / s_4) + e_{c4} \quad \in \mathbb{R}^d$$
 
-$H = 6$ heads, $L = 3$ levels (L2–L4), $M = 4$ samples per head per level.
+Note: these use **different projections** from B1's local tokens (PreCompute's Conv2d vs TokenConstructor's Linear). No redundancy.
 
-**Sampling with per-level normalization:**
+**Routed L4 tokens (20):** Simple gather from pre-computed $g$ (Section 5.2) at B3b routing indices:
 
-$$p_{\text{sample}} = \mathbf{p}_r^{(\ell)} + \frac{\Delta p_{r,h,\ell,m}}{S_\ell}$$
-$$f_{r,h,\ell,m} = \text{GridSample}(\hat{L}^{(\ell)}, \text{Normalize}(p_{\text{sample}}))$$
+$$g_r = g[r] + e_g \quad \text{for each } r \in R_q, \quad \in \mathbb{R}^d$$
 
-$S_\ell$: spatial extent of level $\ell$ (e.g., [80, 40, 20] for L2–L4, using $W$ dimension).
+No learned offsets, no deformable sampling. Stable signal from the start of training.
 
-**Per-head aggregation:**
+**B5 token set:**
+$$\mathcal{T}_{\text{B5}} = [c_q^{(2)};\; c_q^{(3)};\; c_q^{(4)};\; g_{r_1};\; \ldots;\; g_{r_{20}}] \quad \in \mathbb{R}^{23 \times d}$$
 
-$$a_{r,h,\ell,m} = \frac{\exp(\beta_{r,h,\ell,m})}{\sum_{\ell',m'} \exp(\beta_{r,h,\ell',m'})}, \quad \tilde{h}_{r,h} = \sum_{\ell,m} a_{r,h,\ell,m} \, v_{r,h,\ell,m}$$
+4 type embeddings: $e_{c2}, e_{c3}, e_{c4}, e_g \in \mathbb{R}^d$ (initialized to zero).
 
-$v_{r,h,\ell,m} \in \mathbb{R}^{d/H}$: head-partitioned pre-projected feature. Concat + output projection:
+| Token type | Count | Source | Purpose |
+|-----------|:---:|--------|---------|
+| L2 central | 1 | bilinear from $\hat{L}_2$ at $q$ | Fine texture/edges at query |
+| L3 central | 1 | bilinear from $\hat{L}_3$ at $q$ | Mid-scale features at query |
+| L4 central | 1 | bilinear from $\hat{L}_4$ at $q$ | Coarse structure at query |
+| Top-20 routed L4 | 20 | gather from $g$ | Global structural context |
 
-$$h_r = W_O [\tilde{h}_{r,1}; \ldots; \tilde{h}_{r,H}] + b_O \quad \in \mathbb{R}^d$$
+#### B5 Cross-Attention (3 layers)
 
-**Budget:** 32 anchors × 72 samples = **2,304 deformable lookups**.
-**Total lookups per query:** 92 (B1) + 2,304 (B4) = **2,396**.
+**Per-layer KV:**
+$$K^{(\ell)} = W_K^{(\ell)} \, \text{LN}_{\text{kv2}}(\mathcal{T}_{\text{B5}}), \quad V^{(\ell)} = W_V^{(\ell)} \, \text{LN}_{\text{kv2}}(\mathcal{T}_{\text{B5}}) \quad \in \mathbb{R}^{23 \times d}$$
 
-**Token fusion:** Append 32 deformable tokens to local tokens:
-
-$$\mathcal{T}_{\text{fused}} = [\mathcal{T}_{\text{unified}};\; h_{r_1}{+}e_{\text{deform}};\; \ldots;\; h_{r_{32}}{+}e_{\text{deform}}] \quad \in \mathbb{R}^{123 \times d}$$
-
-5 type embeddings: $e_{L1}, e_{L2}, e_{L3}, e_{L4}, e_{\text{deform}} \in \mathbb{R}^d$.
-
-**B4 params:** conditioning ~80K + offsets ~28K + weights ~14K + $W_O$ ~37K = **~159K**.
-
-### 6.5 B5: Fused Cross-Attention + Depth Head (3 layers, 123 tokens)
-
-*Fuse local + deformable evidence through 3 layers of cross-attention over $\mathcal{T}_{\text{fused}}$.*
-
-**Per-layer KV ($\ell = 3, 4, 5$):**
-$$K^{(\ell)} = W_K^{(\ell)} \, \text{LN}_{\text{kv2}}(\mathcal{T}_{\text{fused}}), \quad V^{(\ell)} = W_V^{(\ell)} \, \text{LN}_{\text{kv2}}(\mathcal{T}_{\text{fused}}) \quad \in \mathbb{R}^{123 \times d}$$
-
-$\text{LN}_{\text{kv2}}$ shared across B5 layers, independent from B2's $\text{LN}_{\text{kv}}$.
-
-**3-layer Pre-LN decoder (same structure as B2):**
+**3-layer Pre-LN decoder:**
 $$h^{(\ell)} \leftarrow h^{(\ell-1)} + \text{MHCrossAttn}^{(\ell)}(Q{=}\text{LN}_q^{(\ell)}(h^{(\ell-1)}),\; K{=}K^{(\ell)},\; V{=}V^{(\ell)})$$
 $$h^{(\ell)} \leftarrow h^{(\ell)} + \text{FFN}^{(\ell)}(\text{LN}_{\text{ff}}^{(\ell)}(h^{(\ell)}))$$
 
-6 heads, $d_{\text{head}} = 32$, FFN: $192 \to 768 \to 192$. Input to layer 3 is $h^{(2)'}$ from B3.
+6 heads, $d_{\text{head}} = 32$, FFN: $192 \to 768 \to 192$. Input to layer 1 is $h^{(3b)}$ from B3b.
 
 **Output:** $h_{\text{fuse}} = h^{(5)} \in \mathbb{R}^d$
 
-**Residual chain:** $h^{(0)} \xrightarrow{+\text{B2: 2L, 91 tok}} h^{(2)} \xrightarrow{+\text{B3: 2L, 300 tok}} h^{(2)'} \xrightarrow{+\text{B5: 3L, 123 tok}} h^{(5)} \to \hat{d}_q$
+**Residual chain:** $h^{(0)} \xrightarrow{+\text{B2: 2L, 91}} h^{(2)} \xrightarrow{+\text{B3a: 2L, L3}} h^{(3a)} \xrightarrow{+\text{B3b: 2L, L4}} h^{(3b)} \xrightarrow{+\text{B5: 3L, 23}} h^{(5)} \to \hat{d}_q$
 
-**Depth prediction:**
-$$r_q = W_{r2} \cdot \text{GELU}(W_{r1} \, h_{\text{fuse}} + b_{r1}) + b_{r2} \quad (192 \to 384 \to 1)$$
-$$\hat{d}_q = \frac{1}{\text{softplus}(s \cdot r_q + b) + \varepsilon}, \quad \varepsilon = 10^{-6}$$
+#### Depth Head
 
-**B5 params:** 3× ($W_Q/W_K/W_V/W_O$ + FFN) ~1,332K + depth MLP ~74K + LNs ~4K = **~1,430K**.
+$$\text{log\_depth} = W_{r2} \cdot \text{GELU}(W_{r1} \, h_{\text{fuse}} + b_{r1}) + b_{r2} \quad (192 \to 384 \to 1)$$
+$$\hat{d}_q = \exp(\text{log\_depth})$$
+
+**Bias initialization:** $b_{r2}$ initialized to $\ln(2.5) \approx 0.916$, centering initial predictions at ~2.5m (NYU median). This equalizes the learning burden: reaching 10m requires $\Delta{=}+1.38$ from init, reaching 0.7m requires $\Delta{=}-1.27$ (ratio 1.09:1, was 6.4:1 with bias=0).
+
+**B5 params:** 3× ($W_Q/W_K/W_V/W_O$ + FFN) ~1,332K + depth MLP ~74K + LNs ~4K + type embeddings ~1K = **~1,431K**.
 
 ---
 
@@ -377,17 +437,16 @@ $$\hat{d}_q = \frac{1}{\text{softplus}(s \cdot r_q + b) + \varepsilon}, \quad \v
 | GT depth | Dense (Kinect), max ~10m |
 | Eval crop | Eigen center crop: rows [45:471], cols [41:601] |
 
-### 7.2 Loss Functions
+### 7.2 Loss Functions (v13.1)
 
-$$\mathcal{L} = L_{\text{point}} + \lambda_{\text{si}} \, L_{\text{silog}}$$
+$$\mathcal{L} = L_{\text{silog}}$$
 
-**Data fit (Huber on inverse depth):**
-$$L_{\text{point}} = \frac{1}{K} \sum_{q \in Q} \text{Huber}(\hat{\rho}(q) - \rho^*(q)), \quad \hat{\rho} = \text{softplus}(s \cdot r_q + b) + \varepsilon, \quad \rho^* = 1/d^*$$
-
-**Scale-invariant structure:**
+**Scale-invariant log loss (SILog):**
 $$L_{\text{silog}} = \sqrt{\frac{1}{K} \sum_q \delta_q^2 - \lambda_{\text{var}} \left(\frac{1}{K} \sum_q \delta_q\right)^2}, \quad \delta_q = \log \hat{d}_q - \log d_q^*$$
 
-$\lambda_{\text{si}} = 0.5$, $\lambda_{\text{var}} = 0.85$.
+$\lambda_{\text{var}} = 0.5$.
+
+> **v13.1 changes:** Dropped $L_{\text{point}}$ (Huber on inverse depth). Exp 3 showed $L_{\text{point}}$ conflicts with SILog — gradient $\propto 1/\text{depth}^2$ biases toward near depths, causing oscillation at epoch 3. SILog alone provides uniform gradients in log-space across the full depth range. $\lambda_{\text{var}}$ lowered from 0.85 to 0.5 (less scale penalty, better for metric depth).
 
 ### 7.3 Training Setup
 
@@ -404,7 +463,7 @@ $\lambda_{\text{si}} = 0.5$, $\lambda_{\text{var}} = 0.85$.
 | Gradient clipping | 1.0 |
 | Attention dropout | 0.1 (B2, B3, B5, L4 self-attn) |
 | Encoder | ConvNeXt V2-T, fine-tuned with 0.1× LR |
-| Trainable | All (~36.5M: encoder 28.6M + neck/self-attn 3.9M + precompute 0.5M + decoder 3.4M) |
+| Trainable | All (~40.7M: encoder 28.6M + self-attn/neck 7.5M + precompute 0.7M + decoder 3.9M) |
 
 **Query sampling:** Uniform random over all pixels (NYU has dense GT). Optional: 70% random + 30% high-gradient regions (depth edges) for better edge quality.
 
@@ -430,24 +489,29 @@ $\lambda_{\text{si}} = 0.5$, $\lambda_{\text{var}} = 0.85$.
 
 ---
 
-## 9. Parameter Budget
+## 9. Parameter Budget (v13.1)
 
-| Component | Params |
-|-----------|-------:|
-| **Encoder: ConvNeXt V2-T** (fine-tuned 0.1× LR) | **~28,600K** |
-| Projection Neck (Section 4) | ~401K |
-| L4 Self-Attention, 2× FullSelfAttn₃₈₄ (Section 4) | ~3,542K |
-| B3 KV projections (Section 5.1) | ~296K |
-| $W_g$ anchor projection (Section 5.2) | ~74K |
-| B4 $W_V$ pre-projections (Section 5.3) | ~136K |
-| Calibration heads (Section 5.4) | ~0.8K |
-| B1: Feature extraction + tokens | ~142K |
-| B2: Local cross-attn (2 layers) | ~891K |
-| B3: Global cross-attn (2 layers) | ~740K |
-| B4: Deformable read + fusion | ~159K |
-| B5: Fused cross-attn (3 layers) + depth head | ~1,430K |
-| **Neck + L4 self-attn + precompute + decoder** | **~7,812K (~7.8M)** |
-| **Total model** | **~36,412K (~36.5M)** |
+| Component | v13.0 | v13.1 | Delta |
+|-----------|------:|------:|------:|
+| **Encoder: ConvNeXt V2-T** (fine-tuned 0.1× LR) | **28,600K** | **28,600K** | — |
+| Projection Neck (Section 4.2) | 401K | 401K | — |
+| **L3 Self-Attention, 2× FullSelfAttn₃₈₄ (Section 4.1)** | — | **3,542K** | **+3,542K** |
+| L4 Self-Attention, 2× FullSelfAttn₃₈₄ (Section 4.3) | 3,542K | 3,542K | — |
+| B3b L4 KV projections (Section 5.1) | 296K | 296K | — |
+| **B3a L3 KV projections (Section 5.1b)** | — | **148K** | **+148K** |
+| $W_g$ L4 projection (Section 5.2) | 74K | 74K | — |
+| Per-level projections (Section 5.3) | 136K | 136K | — |
+| ~~Calibration heads (Section 5.4)~~ | 0.8K | — | -0.8K |
+| B1: Feature extraction + tokens | 142K | 142K | — |
+| B2: Local cross-attn (2 layers) | 891K | 891K | — |
+| **B3a: L3 global cross-attn (2 layers)** | — | **740K** | **+740K** |
+| B3b: L4 global cross-attn (2 layers) | 740K | 740K | — |
+| ~~B4: Deformable read + fusion~~ | 159K | — | **-159K** |
+| B5: Fused cross-attn (3L) + depth head + type emb | 1,430K | 1,431K | +1K |
+| **Neck + self-attn + precompute + decoder** | **~7,812K** | **~12,083K** | **+4,271K** |
+| **Total model** | **~36,412K (~36.5M)** | **~40,683K (~40.7M)** | **+4,271K** |
+
+**What changed:** +L3 self-attn (3,542K) + B3a (L3 cross-attn, 888K) − B4 (DeformableRead, 159K) − Calib (0.8K) = net +4,271K.
 
 **Efficiency comparison vs dense baseline (DAv2-S):**
 
@@ -460,7 +524,7 @@ $$T_{\text{ours}}(K) \approx 2.6 + 0.005K \;\text{ms}, \quad T_{\text{DAv2-S}} \
 | 256 | 3.9 | 5.0 | **1.3×** |
 | 490 | 5.0 | 5.0 | 1.0× (break-even) |
 
-*Timings estimated for RTX 4090. On RTX 4060 laptop (training hardware), absolute times scale proportionally but relative speedup is preserved.*
+*Timings estimated for RTX 4090. B4 removal (no grid_sample loops) and B5 token reduction (123→23) should offset B3a addition. Net latency impact expected to be neutral or slightly faster.*
 
 ---
 
@@ -477,8 +541,8 @@ src/spd/
 │   ├── precompute.py           # KV projections, W_V projections, calibration (Section 5)
 │   ├── query_encoder.py        # B1: Feature extraction + token construction (Section 6.1)
 │   ├── local_cross_attn.py     # B2: 2-layer cross-attn over 91 tokens (Section 6.2)
-│   ├── global_cross_attn.py    # B3: 2-layer L4 cross-attn + routing (Section 6.3)
-│   ├── deformable_read.py      # B4: Offset prediction + multi-scale sampling (Section 6.4)
+│   ├── global_cross_attn.py    # B3a (no routing) + B3b (L4 + routing) (Sections 6.3a/6.3b)
+│   ├── deformable_read.py      # ~~B4~~ (REMOVED in v13.1, kept for reference)
 │   └── fused_decoder.py        # B5: 3-layer fused cross-attn + depth head (Section 6.5)
 ├── data/
 │   ├── nyu_dataset.py          # NYU Depth V2 data loading + augmentation
@@ -496,16 +560,34 @@ src/spd/
 - `timm` — ConvNeXt V2-T pre-trained weights (`convnextv2_tiny.fcmae_ft_in1k`)
 - NYU Depth V2 dataset (download via standard script)
 
-### 10.3 Build Order
+### 10.3 Build Order (v13.1)
 
-Each step is independently testable. Do not proceed if the current step fails.
+Steps 1–5 already implemented and validated. Steps 6–7 revised for v13.1 architecture.
+
+| Step | What to build | Status |
+|------|--------------|--------|
+| 1 | ConvNeXt V2-T encoder + projection neck + L4 self-attn | ✅ Done |
+| 2 | Pre-compute module (B3b L4 KV, wg, proj_l2/l3/l4) | ✅ Done |
+| 3 | B1 token construction (91 tokens + seed) | ✅ Done |
+| 4 | B2 local cross-attn | ✅ Done |
+| 5 | B3b global L4 cross-attn + routing | ✅ Done (was B3) |
+
+**v13.1 new steps:**
 
 | Step | What to build | How to validate |
 |------|--------------|-----------------|
-| 1 | ConvNeXt V2-T encoder + projection neck + L4 self-attn | Verify output shapes: L1 [B,64,120,160], L2 [B,128,60,80], L3 [B,192,30,40], L4 [B,384,15,20]. PCA of L3/L4 features should show semantic structure. |
-| 2 | Pre-compute module | Verify KV shapes [300, 192], $\hat{L}$ shapes, calibration scalars. |
-| 3 | B1 token construction | Verify $\mathcal{T}_{\text{unified}}$ shape [B, K, 91, 192], $h^{(0)}$ shape [B, K, 192]. Test with random queries. |
-| 4 | B2 local cross-attn + simple depth head | Train with $L_{\text{point}}$ only. Should achieve non-trivial AbsRel (< 0.3) on NYU. This validates the local-only decoder. |
-| 5 | B3 global cross-attn + routing | Add B3. Verify routing selects diverse L4 positions (monitor attention entropy). |
-| 6 | B4 deformable sampling | Add B4. Verify 2,304 grid_sample lookups produce [B, K, 32, 192] anchor features. |
-| 7 | B5 fused cross-attn + full training | Full B1–B5 pipeline. Train with $L_{\text{point}} + L_{\text{silog}}$. Target: AbsRel close to DAv2-S dense baseline. |
+| 6 | L3 Self-Attention: 2× FullSelfAttn₃₈₄ between Stage 3 and Stage 4 (Section 4.1) | Modify encoder to split forward (stages 1–3, then L3 self-attn, then stage 4). Verify L3_enhanced shape [B, 384, H/16, W/16]. Verify L4 shape unchanged. |
+| 7 | Pre-compute: add L3 KV projections (Section 5.1b) | Verify `K_l3_0`, `V_l3_0` shapes [B, N_L3, 192]. At 256×320: N_L3=320. |
+| 8 | B3a: L3 global cross-attn (2 layers, no routing) | Verify h shape unchanged [B, K, 192]. Use `GlobalCrossAttnNoRouting`. |
+| 9 | B5 token construction: 3 central + 20 routed | Verify $\mathcal{T}_{\text{B5}}$ shape [B, K, 23, 192]. Central: bilinear from proj maps. Routed: gather from g. |
+| 10 | B5 depth head bias init + FusedDecoder with 23 tokens | Verify initial pred mean ≈ 2.5m. Remove B4 from SPD. |
+| 11 | Full pipeline: B1→B2→B3a→B3b→B5, SILog loss | Train 10 epochs. Target: AbsRel < 0.22 (beat Exp 3's 0.231), no regression. Monitor pred range — should reach >6m. |
+
+**Key changes from v13.0 build order:**
+- **L3 self-attention** (2 layers, d=384) inserted between Stage 3 and Stage 4
+- L4 self-attention (2 layers, d=384) retained in neck — 4 total self-attn layers
+- ~~B4 deformable sampling~~ → removed
+- ~~B5 with 123 fused tokens~~ → 23 tokens (3 central + 20 routed)
+- ~~$L_{\text{point}} + L_{\text{silog}}$~~ → $L_{\text{silog}}$ only ($\lambda_{\text{var}} = 0.5$)
+- B3 routing: top-32 → top-20
+- Depth head bias: 0 → $\ln(2.5)$

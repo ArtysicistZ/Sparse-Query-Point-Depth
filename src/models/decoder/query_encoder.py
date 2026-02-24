@@ -136,7 +136,7 @@ class TokenConstructor(nn.Module):
 
         final_tokens = torch.cat([l1_token, l2_token, l3_token, l4_token], dim=2)  # [B, K, 91, d_model]
 
-        return final_tokens, seed
+        return final_tokens, center_tokens, seed
 
 
 if __name__ == "__main__":

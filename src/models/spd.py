@@ -1,14 +1,14 @@
 import torch
 import torch.nn as nn
 
-from models.encoder import ConvNeXtV2Encoder
-from models.pyramid_neck import ProjectionNeck
-from models.precompute import PreCompute
-from models.query_encoder import TokenConstructor
-from models.local_cross_attn import LocalCrossAttn
-from models.global_cross_attn import GlobalCrossAttn
-from models.deformable_read import DeformableRead
-from models.fused_decoder import FusedDecoder
+from models.encoder.convnext import ConvNeXtV2Encoder
+from models.encoder.pyramid_neck import ProjectionNeck
+from models.encoder.precompute import PreCompute
+from models.decoder.query_encoder import TokenConstructor
+from models.decoder.local_cross_attn import LocalCrossAttn
+from models.decoder.global_cross_attn import GlobalCrossAttn, GlobalCrossAttnNoRouting
+# from models.decoder.deformable_read import DeformableRead
+from models.decoder.fused_decoder import FusedDecoder
 
 class SPD(nn.Module):
 
@@ -19,8 +19,9 @@ class SPD(nn.Module):
         self.precompute = PreCompute()
         self.b1 = TokenConstructor()
         self.b2 = LocalCrossAttn()
-        self.b3 = GlobalCrossAttn()
-        self.b4 = DeformableRead()
+        self.b3a = GlobalCrossAttnNoRouting()
+        self.b3b = GlobalCrossAttn()
+        # self.b4 = DeformableRead()
         self.b5 = FusedDecoder()
 
     def forward(self, images: torch.Tensor, query_coords: torch.Tensor) -> torch.Tensor:
@@ -28,14 +29,12 @@ class SPD(nn.Module):
         features = self.neck(features)
         features = self.precompute(features)
 
-        query_tokens, seed = self.b1(features, query_coords)
+        query_tokens, center_tokens, seed = self.b1(features, query_coords)
         h = self.b2(seed, query_tokens)
-        h, top_indices = self.b3(h, features)
+        h, top_indices_l3 = self.b3b(h, features, lev=3, k=20)
+        h, top_indices_l4 = self.b3b(h, features, lev=4, k=10)  # B3b on L4 for better global feature fusion
 
-        deform_tokens = self.b4(h, top_indices, query_coords, features)
-        fused_tokens = torch.cat([query_tokens, deform_tokens], dim=2)
-
-        log_depth = self.b5(h, fused_tokens)  # [B, K]
+        log_depth = self.b5(h, center_tokens, top_indices_l4, top_indices_l3)
         depth = torch.exp(log_depth)           # metric depth
         return depth
 

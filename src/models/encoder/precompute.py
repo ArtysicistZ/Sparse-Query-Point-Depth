@@ -9,12 +9,20 @@ class PreCompute(nn.Module):
         super().__init__()
 
         self.n_layers = n_layers
-        self.wk = nn.ModuleList([
+        self.wk_l4 = nn.ModuleList([
             nn.Linear(l4_channels, d_model) for _ in range(n_layers)
         ])
 
-        self.wv = nn.ModuleList([
+        self.wv_l4 = nn.ModuleList([
             nn.Linear(l4_channels, d_model) for _ in range(n_layers)
+        ])
+
+        self.wk_l3 = nn.ModuleList([
+            nn.Linear(l3_channels, d_model) for _ in range(n_layers)
+        ])
+
+        self.wv_l3 = nn.ModuleList([
+            nn.Linear(l3_channels, d_model) for _ in range(n_layers)
         ])
 
         self.proj_l4 = nn.Conv2d(l4_channels, d_model, kernel_size=1)
@@ -34,10 +42,13 @@ class PreCompute(nn.Module):
         B, C, H, W = out['L4'].shape
 
         L4_flat = out['L4'].flatten(2).transpose(1, 2)  # [B, H*W, C]
+        L3_flat = out['L3'].flatten(2).transpose(1, 2)  # [B, H*W, C]
 
         for i in range(self.n_layers):
-            out[f'K_{i}'] = self.wk[i](L4_flat)
-            out[f'V_{i}'] = self.wv[i](L4_flat)
+            out[f'K_{i}_l4'] = self.wk_l4[i](L4_flat)
+            out[f'V_{i}_l4'] = self.wv_l4[i](L4_flat)
+            out[f'K_{i}_l3'] = self.wk_l3[i](L3_flat)
+            out[f'V_{i}_l3'] = self.wv_l3[i](L3_flat)
 
         out['L2_proj'] = self.proj_l2(out['L2'])
         out['L3_proj'] = self.proj_l3(out['L3'])

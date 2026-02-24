@@ -65,28 +65,29 @@ class GlobalCrossAttn(nn.Module):
             CrossAttnLayer(d_model, n_head) for _ in range(num_layers)
         ])
 
-    def forward(self, h: torch.Tensor, precomputed: dict) -> torch.Tensor:
+    def forward(self, h: torch.Tensor, precomputed: dict, lev: int, queries: int) -> torch.Tensor:
         for i, layer in enumerate(self.layers):
             if i == len(self.layers) - 1:  # Last layer, return attn weights for routing
-                h, attn_weight = layer(h, precomputed[f'K_{i}'], precomputed[f'V_{i}'], ret_attn=True)
+                h, attn_weight = layer(h, precomputed[f'K_{i}_l{lev}'], precomputed[f'V_{i}_l{lev}'], ret_attn=True)
             else:
-                h, _ = layer(h, precomputed[f'K_{i}'], precomputed[f'V_{i}'], ret_attn=False)
+                h, _ = layer(h, precomputed[f'K_{i}_l{lev}'], precomputed[f'V_{i}_l{lev}'], ret_attn=False)
 
         avg_attn = attn_weight.squeeze(3).mean(dim=2) 
-        _, top_indices = avg_attn.topk(32, dim=-1)
+        _, top_indices = avg_attn.topk(queries, dim=-1)
         return h, top_indices
     
 
-if __name__ == "__main__":
-    precomputed = {
-        'K_0': torch.randn(2, 300, 192),
-        'V_0': torch.randn(2, 300, 192),
-        'K_1': torch.randn(2, 300, 192),
-        'V_1': torch.randn(2, 300, 192),
-    }
-    h = torch.randn(2, 16, 192)  # B=2, K=16
+class GlobalCrossAttnNoRouting(nn.Module):
 
-    model = GlobalCrossAttn()
-    h_out, top_idx = model(h, precomputed)
-    print(f"h: {h_out.shape}")          # expect [2, 16, 192]
-    print(f"top_idx: {top_idx.shape}")  # expect [2, 16, 32]
+    def __init__(self, d_model: int = 192, n_head: int = 6, num_layers: int = 2):
+        super().__init__()
+        self.layers = nn.ModuleList([
+            CrossAttnLayer(d_model, n_head) for _ in range(num_layers)
+        ])
+
+    def forward(self, h: torch.Tensor, precomputed: dict, lev: int) -> torch.Tensor:
+        for i, layer in enumerate(self.layers):
+            h, _ = layer(h, precomputed[f'K_{i}_l{lev}'], precomputed[f'V_{i}_l{lev}'], ret_attn=False)
+        return h
+    
+    
