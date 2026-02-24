@@ -2,7 +2,7 @@
 
 Author: Claude
 Date: 2026-02-23
-Version: v13 (first trial — frozen DAv2-S encoder, sparse B1–B5 decoder, NYU Depth V2)
+Version: v13 (first trial — ConvNeXt V2-T encoder + L4 self-attention, sparse B1–B5 decoder, NYU Depth V2)
 
 ---
 
@@ -16,26 +16,29 @@ Version: v13 (first trial — frozen DAv2-S encoder, sparse B1–B5 decoder, NYU
 
 $$T_{\text{total}}(K) = T_{\text{encode}}(I) + T_{\text{decode}}(K \mid \text{features})$$
 
-**Baseline:** DAv2-S (ViT-S + DPT decoder) produces dense $H \times W$ depth, then sample at query points.
-**Ours:** Same ViT-S encoder (frozen) + lightweight sparse B1–B5 decoder → depth at K points only.
+**Baseline:** DAv2-S (ViT-S encoder + DPT dense decoder) produces dense $H \times W$ depth (~49G MACs, ~5.0ms on RTX 4090).
+**Ours:** ConvNeXt V2-T encoder + sparse B1–B5 decoder → depth at K points only (~42G MACs at K=256, ~3.9ms). Faster for $K < 490$.
 
 ---
 
 ## 2. Architecture Overview
 
 ```
-RGB Image (H×W)
+RGB Image (480×640, NYU native)
   │
   ▼
-Frozen DAv2-S ViT-S encoder
-  Extract at layers [2, 5, 8, 11] → 4 × [H_p×W_p×384]
+ConvNeXt V2-T encoder (ImageNet pre-trained, fine-tuned with 0.1× LR)
+  Stage 1: 120×160×96   (3× ConvNeXt block, stride 4)
+  Stage 2:  60×80×192   (3× ConvNeXt block, stride 8)
+  Stage 3:  30×40×384   (9× ConvNeXt block, stride 16)
+  Stage 4:  15×20×768   (3× ConvNeXt block, stride 32)
   │
   ▼
-Pyramid Neck (trainable)
-  L1 [4H_p × 4W_p × 64]    (bilinear ↑4×, Conv 1×1)
-  L2 [2H_p × 2W_p × 128]   (bilinear ↑2×, Conv 1×1)
-  L3 [H_p × W_p × 192]     (identity,     Conv 1×1)
-  L4 [H_p/2 × W_p/2 × 384] (AvgPool  ↓2×, Conv 1×1)
+Projection Neck (trainable, Conv 1×1 + LN per level)
+  Stage 1 [120×160×96]  → Conv(96→64, k1)  + LN → L1 [120×160×64]
+  Stage 2 [ 60×80×192]  → Conv(192→128, k1) + LN → L2 [ 60×80×128]
+  Stage 3 [ 30×40×384]  → Conv(384→192, k1) + LN → L3 [ 30×40×192]
+  Stage 4 [ 15×20×768]  → Conv(768→384, k1) + LN → 2× FullSelfAttn₃₈₄ → L4 [15×20×384]
   │
   ▼
 Pre-compute (once per image)
@@ -45,58 +48,88 @@ Pre-compute (once per image)
 Per-query decoder B1–B5 (×K queries in parallel)
   B1: 91 local tokens + query seed h^(0)
   B2: 2-layer cross-attn (91 tokens) → h^(2)
-  B3: 2-layer L4 cross-attn (324 tokens) → h^(2)', 32 anchors
+  B3: 2-layer L4 cross-attn (300 tokens) → h^(2)', 32 anchors
   B4: Deformable read (32 anchors × 72 samples) → 123 fused tokens
   B5: 3-layer cross-attn (123 tokens) → depth
 ```
 
-Core dimension $d = 192$. Pyramid channels: [64, 128, 192, 384].
+Core dimension $d = 192$. Encoder channels: [96, 192, 384, 768]. Decoder pyramid channels: [64, 128, 192, 384].
 
 ---
 
-## 3. Encoder: Frozen DAv2-S
+## 3. Encoder: ConvNeXt V2-T
 
-Frozen Depth Anything V2 Small encoder (DINOv2-pretrained, depth-finetuned ViT-S). The DPT decoder head is discarded — we use only the ViT backbone.
+ConvNeXt V2-Tiny (FCMAE pre-trained on ImageNet, 83.0% top-1). Hierarchical CNN with 4 stages producing a natural multi-scale pyramid at strides [4, 8, 16, 32]. Fine-tuned with 0.1× decoder learning rate.
 
 | Parameter | Value |
 |-----------|-------|
-| Architecture | ViT-S (DINOv2) |
-| embed_dim | 384 |
-| Layers | 12 |
-| Heads | 6 |
-| patch_size | 14 |
-| Input size | 518×518 (resize from NYU 480×640) |
-| Patch grid $(H_p \times W_p)$ | 37×37 = 1,369 tokens |
-| Intermediate layers | [2, 5, 8, 11] (0-indexed) |
-| Params | ~24.8M (all frozen) |
+| Architecture | ConvNeXt V2-Tiny |
+| Stages | 4 (depths: [3, 3, 9, 3]) |
+| Channels | [96, 192, 384, 768] |
+| Strides | [4, 8, 16, 32] |
+| Input size | 480×640 (NYU native, no resize) |
+| Stem | Conv(3→96, k4, s4) — patchify |
+| Block type | ConvNeXt V2 (DW Conv k7 + GRN + PW Conv) |
+| Params | ~28.6M |
+| FLOPs (480×640) | ~27.5G MACs |
 
-Features at each intermediate layer: reshape from $(N, 384)$ sequence to $(H_p, W_p, 384)$ spatial grid, excluding CLS token.
+**Stage outputs (480×640 input):**
 
-**Source:** `src/f3/tasks/depth/depth_anything_v2/dinov2.py` (ViT-S definition), `src/f3/tasks/depth/depth_anything_v2/dpt.py` (intermediate layer indices).
+```
+RGB 480×640×3
+  → Stem: Conv(3→96, k4, s4)                                    120×160×96
+  → Stage 1: 3× ConvNeXt V2 block (DW k7 + GRN + PW, 96ch)  → 120×160×96   stride 4
+  → Down: LN + Conv(96→192, k2, s2)                              60×80×192
+  → Stage 2: 3× ConvNeXt V2 block (192ch)                     →  60×80×192   stride 8
+  → Down: LN + Conv(192→384, k2, s2)                             30×40×384
+  → Stage 3: 9× ConvNeXt V2 block (384ch)                     →  30×40×384   stride 16
+  → Down: LN + Conv(384→768, k2, s2)                             15×20×768
+  → Stage 4: 3× ConvNeXt V2 block (768ch)                     →  15×20×768   stride 32
+```
+
+**Why ConvNeXt V2-T over other backbones:**
+- Natural 4-level pyramid at strides [4, 8, 16, 32] — true multi-resolution features (no fake upsampling from single-resolution ViT)
+- 40–50% faster than Swin-T on GPU at same FLOPs (pure conv, no window partition overhead)
+- Higher accuracy than Swin-T (83.0% vs 81.3% IN-1K)
+- GRN (Global Response Normalization) — same component proven in our v12 design
+- L1–L3 need strong **local** features (our decoder samples them locally); ConvNeXt excels at this
+
+**Source:** Pre-trained weights from `timm` (`convnextv2_tiny.fcmae_ft_in22k_in1k` or `convnextv2_tiny.fcmae_ft_in1k`).
 
 ---
 
-## 4. Pyramid Neck (trainable)
+## 4. Projection Neck + L4 Self-Attention (trainable)
 
-Converts 4 ViT intermediate feature maps into a 4-level pyramid via bilinear resize + 1×1 convolution + LayerNorm. All sizes shown for 518×518 input ($H_p = W_p = 37$):
+**Projection neck:** 1×1 convolutions project ConvNeXt channels [96, 192, 384, 768] to decoder channels [64, 128, 192, 384]:
 
 ```
-ViT Layer 2  (37×37×384) → bilinear ↑4× [148×148] → Conv(384→64,  k1) + LN → L1
-ViT Layer 5  (37×37×384) → bilinear ↑2× [ 74×74 ] → Conv(384→128, k1) + LN → L2
-ViT Layer 8  (37×37×384) → identity      [ 37×37 ] → Conv(384→192, k1) + LN → L3
-ViT Layer 11 (37×37×384) → AvgPool  ↓2× [ 18×18 ] → Conv(384→384, k1) + LN → L4
+Stage 1 [120×160×96]  → Conv(96→64,   k1) + LN → L1 [120×160×64]    stride 4
+Stage 2 [ 60×80×192]  → Conv(192→128,  k1) + LN → L2 [ 60×80×128]   stride 8
+Stage 3 [ 30×40×384]  → Conv(384→192,  k1) + LN → L3 [ 30×40×192]   stride 16
+Stage 4 [ 15×20×768]  → Conv(768→384,  k1) + LN → L4_pre [15×20×384] stride 32
 ```
 
-General formula: $L_1 = 4H_p$, $L_2 = 2H_p$, $L_3 = H_p$, $L_4 = \lfloor H_p/2 \rfloor$. Effective stride ratios between levels ≈ 1:2:4:8.
+**L4 self-attention:** 2× FullSelfAttn₃₈₄ on top of L4_pre. Required for B3 routing — every L4 token must have global scene context.
 
-| Level | Resolution | Channels | Eff. stride | Tokens |
+```
+L4_pre [15×20×384, 300 tokens]
+  → FullSelfAttn₃₈₄ layer 1 (6 heads, d_head=64, Pre-LN + FFN 384→1536→384)
+  → FullSelfAttn₃₈₄ layer 2 (same)
+  → L4 [15×20×384, 300 tokens]    ← every token sees all 300 positions
+```
+
+At 300 tokens, full self-attention is trivially cheap (~0.8G MACs, ~0.03ms). ConvNeXt's L4 has only local receptive field from k=7 convolutions — without self-attention, B3 routing would select anchors based on local content only, missing global scene structure.
+
+| Level | Resolution | Channels | Stride | Tokens |
 |-------|:---:|:---:|:---:|:---:|
-| L1 | 148×148 | 64 | ~3.5 | 21,904 |
-| L2 | 74×74 | 128 | ~7.0 | 5,476 |
-| L3 | 37×37 | 192 | ~14.0 | 1,369 |
-| L4 | 18×18 | 384 | ~28.8 | 324 |
+| L1 | 120×160 | 64 | 4 | 19,200 |
+| L2 | 60×80 | 128 | 8 | 4,800 |
+| L3 | 30×40 | 192 | 16 | 1,200 |
+| L4 | 15×20 | 384 | 32 | 300 |
 
-**Neck params:** ~25K + ~50K + ~74K + ~149K ≈ **~298K**.
+**Neck params:** ~6K + ~25K + ~74K + ~296K = **~401K**.
+**L4 self-attention params:** 2× (4 × 384² + FFN 384→1536→384) = **~3,542K**.
+**Neck + L4 self-attn total: ~3,943K (~3.9M)**.
 
 ---
 
@@ -109,7 +142,7 @@ General formula: $L_1 = 4H_p$, $L_2 = 2H_p$, $L_3 = H_p$, $L_4 = \lfloor H_p/2 \
 
 Each B3 layer $\ell = 1, 2$ has per-layer $W_K^{(\ell)}, W_V^{(\ell)} \in \mathbb{R}^{d \times 384}$, applied to L4:
 
-$$K^{(\ell)} = L_4 \, (W_K^{(\ell)})^T, \quad V^{(\ell)} = L_4 \, (W_V^{(\ell)})^T \quad \in \mathbb{R}^{324 \times d}$$
+$$K^{(\ell)} = L_4 \, (W_K^{(\ell)})^T, \quad V^{(\ell)} = L_4 \, (W_V^{(\ell)})^T \quad \in \mathbb{R}^{300 \times d}$$
 
 Params: $4 \times 384 \times 192 =$ **~296K**.
 
@@ -117,7 +150,7 @@ Params: $4 \times 384 \times 192 =$ **~296K**.
 
 $W_g \in \mathbb{R}^{d \times 384}$ pre-projects all L4 features for B4 anchor conditioning:
 
-$$g = L_4 \, W_g^T \quad \in \mathbb{R}^{324 \times d}$$
+$$g = L_4 \, W_g^T \quad \in \mathbb{R}^{300 \times d}$$
 
 Params: **~74K**.
 
@@ -154,14 +187,14 @@ All steps batched over $K$ queries in parallel. Coordinate convention: `F.grid_s
 |--------|---------|-------|
 | $d$ | Core dimension | 192 |
 | $q = (u, v)$ | Query pixel coordinate | — |
-| $s_\ell$ | Effective stride of level $\ell$: $s_1 {\approx} 3.5,\; s_2 {=} 7,\; s_3 {=} 14,\; s_4 {\approx} 29$ | scalar |
+| $s_\ell$ | Effective stride of level $\ell$: $s_1 {=} 4,\; s_2 {=} 8,\; s_3 {=} 16,\; s_4 {=} 32$ | scalar |
 | $f_q^{(1)}$ | L1 center feature: Bilinear($L_1$, $q / s_1$) | 64 |
 | $\text{pe}_q$ | Fourier positional encoding of $(u, v)$ | 32 |
 | $h^{(0)}$ | Query seed: $W_q [f_q^{(1)};\; \text{pe}_q]$ | $d$ |
 | $\mathcal{T}_{\text{unified}}$ | Local tokens (32 L1 + 25 L2 + 25 L3 + 9 L4) | $91 \times d$ |
 | $h^{(2)}$ | B2 output (local-aware query) | $d$ |
 | $h^{(2)'}$ | B3 output (globally-aware query) | $d$ |
-| $\bar{\alpha}_q$ | Head-averaged B3 attention weights | 324 |
+| $\bar{\alpha}_q$ | Head-averaged B3 attention weights | 300 |
 | $R_q$ | Top-32 L4 anchor positions from B3 routing | 32 positions |
 | $h_r$ | Per-anchor deformable evidence (B4 output) | $d$ |
 | $\mathcal{T}_{\text{fused}}$ | $[\mathcal{T}_{\text{unified}};\; h_{r_1}{+}e_{\text{deform}};\; \ldots;\; h_{r_{32}}{+}e_{\text{deform}}]$ | $123 \times d$ |
@@ -240,9 +273,9 @@ $$h^{(\ell)} \leftarrow h^{(\ell)} + \text{FFN}^{(\ell)}(\text{LN}_{\text{ff}}^{
 
 **B2 params:** 2× per-layer ($W_Q/W_K/W_V/W_O$ ~148K + FFN ~296K) + LNs ~3K = **~891K**.
 
-### 6.3 B3: Global L4 Cross-Attention + Routing (2 layers, 324 tokens)
+### 6.3 B3: Global L4 Cross-Attention + Routing (2 layers, 300 tokens)
 
-*Enrich $h^{(2)}$ with global scene context from all 324 L4 tokens, then route to 32 anchors.*
+*Enrich $h^{(2)}$ with global scene context from all 300 L4 tokens (each with global RF from L4 self-attention), then route to 32 anchors.*
 
 **2-layer cross-attention into L4** using pre-computed KV from Section 5.1:
 
@@ -255,9 +288,9 @@ $$h^{(2)} \leftarrow h^{(2)} + \text{FFN}^{(\ell)}(\text{LN}^{(\ell)}(h^{(2)}))$
 
 **Attention-based routing (zero extra params):** Head-average attention weights from B3 layer 2, select top-$R$:
 
-$$\bar{\alpha}_q = \frac{1}{H} \sum_{h=1}^{H} \alpha_{q,h} \quad \in \mathbb{R}^{324}, \quad R_q = \text{Top-}R(\bar{\alpha}_q, R{=}32)$$
+$$\bar{\alpha}_q = \frac{1}{H} \sum_{h=1}^{H} \alpha_{q,h} \quad \in \mathbb{R}^{300}, \quad R_q = \text{Top-}R(\bar{\alpha}_q, R{=}32)$$
 
-Each $r \in R_q$ maps to pixel coordinate $\mathbf{p}_r$ via L4 grid geometry (18×18, stride ~29). $R = 32$ from 324 = 9.9% selection. Straight-through routing: hard top-R forward, STE backward.
+Each $r \in R_q$ maps to pixel coordinate $\mathbf{p}_r$ via L4 grid geometry (15×20, stride 32). $R = 32$ from 300 = 10.7% selection. Straight-through routing: hard top-R forward, STE backward.
 
 **B3 params:** 2× ($W_Q/W_O$ ~74K + FFN ~296K) + LNs ~2K = **~740K** (KV counted in pre-compute).
 
@@ -284,7 +317,7 @@ $H = 6$ heads, $L = 3$ levels (L2–L4), $M = 4$ samples per head per level.
 $$p_{\text{sample}} = \mathbf{p}_r^{(\ell)} + \frac{\Delta p_{r,h,\ell,m}}{S_\ell}$$
 $$f_{r,h,\ell,m} = \text{GridSample}(\hat{L}^{(\ell)}, \text{Normalize}(p_{\text{sample}}))$$
 
-$S_\ell$: spatial extent of level $\ell$ (e.g., [74, 37, 18] for L2–L4).
+$S_\ell$: spatial extent of level $\ell$ (e.g., [80, 40, 20] for L2–L4, using $W$ dimension).
 
 **Per-head aggregation:**
 
@@ -322,7 +355,7 @@ $$h^{(\ell)} \leftarrow h^{(\ell)} + \text{FFN}^{(\ell)}(\text{LN}_{\text{ff}}^{
 
 **Output:** $h_{\text{fuse}} = h^{(5)} \in \mathbb{R}^d$
 
-**Residual chain:** $h^{(0)} \xrightarrow{+\text{B2: 2L, 91 tok}} h^{(2)} \xrightarrow{+\text{B3: 2L, 324 tok}} h^{(2)'} \xrightarrow{+\text{B5: 3L, 123 tok}} h^{(5)} \to \hat{d}_q$
+**Residual chain:** $h^{(0)} \xrightarrow{+\text{B2: 2L, 91 tok}} h^{(2)} \xrightarrow{+\text{B3: 2L, 300 tok}} h^{(2)'} \xrightarrow{+\text{B5: 3L, 123 tok}} h^{(5)} \to \hat{d}_q$
 
 **Depth prediction:**
 $$r_q = W_{r2} \cdot \text{GELU}(W_{r1} \, h_{\text{fuse}} + b_{r1}) + b_{r2} \quad (192 \to 384 \to 1)$$
@@ -340,7 +373,7 @@ $$\hat{d}_q = \frac{1}{\text{softplus}(s \cdot r_q + b) + \varepsilon}, \quad \v
 |----------|-------|
 | Training | 795 scenes, ~24K image-depth pairs (Eigen split) |
 | Test | 654 images (Eigen split) |
-| Resolution | 480×640 → resize to 518×518 |
+| Resolution | 480×640 (native, no resize) |
 | GT depth | Dense (Kinect), max ~10m |
 | Eval crop | Eigen center crop: rows [45:471], cols [41:601] |
 
@@ -361,16 +394,17 @@ $\lambda_{\text{si}} = 0.5$, $\lambda_{\text{var}} = 0.85$.
 | Setting | Value |
 |---------|-------|
 | Optimizer | AdamW |
-| Learning rate | 1×10⁻⁴ (cosine decay to 1×10⁻⁶) |
+| Learning rate (decoder + neck) | 1×10⁻⁴ (cosine decay to 1×10⁻⁶) |
+| Learning rate (encoder) | 1×10⁻⁵ (0.1× decoder LR) |
 | Weight decay | 0.01 |
 | Batch size | 8 |
 | $K_{\text{train}}$ (queries per image) | 256 |
 | Epochs | 30 |
 | Precision | bf16 mixed precision |
 | Gradient clipping | 1.0 |
-| Attention dropout | 0.1 (B2, B3, B5) |
-| Encoder | Frozen (no gradients) |
-| Trainable | Pyramid neck + pre-compute + decoder (~4.2M params) |
+| Attention dropout | 0.1 (B2, B3, B5, L4 self-attn) |
+| Encoder | ConvNeXt V2-T, fine-tuned with 0.1× LR |
+| Trainable | All (~36.5M: encoder 28.6M + neck/self-attn 3.9M + precompute 0.5M + decoder 3.4M) |
 
 **Query sampling:** Uniform random over all pixels (NYU has dense GT). Optional: 70% random + 30% high-gradient regions (depth edges) for better edge quality.
 
@@ -398,11 +432,11 @@ $\lambda_{\text{si}} = 0.5$, $\lambda_{\text{var}} = 0.85$.
 
 ## 9. Parameter Budget
 
-**Trainable parameters:**
-
 | Component | Params |
 |-----------|-------:|
-| Pyramid Neck (Section 4) | ~298K |
+| **Encoder: ConvNeXt V2-T** (fine-tuned 0.1× LR) | **~28,600K** |
+| Projection Neck (Section 4) | ~401K |
+| L4 Self-Attention, 2× FullSelfAttn₃₈₄ (Section 4) | ~3,542K |
 | B3 KV projections (Section 5.1) | ~296K |
 | $W_g$ anchor projection (Section 5.2) | ~74K |
 | B4 $W_V$ pre-projections (Section 5.3) | ~136K |
@@ -412,12 +446,21 @@ $\lambda_{\text{si}} = 0.5$, $\lambda_{\text{var}} = 0.85$.
 | B3: Global cross-attn (2 layers) | ~740K |
 | B4: Deformable read + fusion | ~159K |
 | B5: Fused cross-attn (3 layers) + depth head | ~1,430K |
-| **Total trainable** | **~4,167K (~4.2M)** |
+| **Neck + L4 self-attn + precompute + decoder** | **~7,812K (~7.8M)** |
+| **Total model** | **~36,412K (~36.5M)** |
 
-| Component | Params |
-|-----------|-------:|
-| Frozen DAv2-S encoder | ~24.8M |
-| **Total model** | **~29.0M** |
+**Efficiency comparison vs dense baseline (DAv2-S):**
+
+$$T_{\text{ours}}(K) \approx 2.6 + 0.005K \;\text{ms}, \quad T_{\text{DAv2-S}} \approx 5.0 \;\text{ms}$$
+
+| K | Ours (ms) | DAv2-S dense (ms) | Speedup |
+|:---:|---:|---:|---:|
+| 16 | 2.7 | 5.0 | 1.9× |
+| 64 | 2.9 | 5.0 | 1.7× |
+| 256 | 3.9 | 5.0 | **1.3×** |
+| 490 | 5.0 | 5.0 | 1.0× (break-even) |
+
+*Timings estimated for RTX 4090. On RTX 4060 laptop (training hardware), absolute times scale proportionally but relative speedup is preserved.*
 
 ---
 
@@ -428,8 +471,9 @@ $\lambda_{\text{si}} = 0.5$, $\lambda_{\text{var}} = 0.85$.
 ```
 src/spd/
 ├── models/
-│   ├── spd.py                  # Main model: encode + pre-compute + decode
-│   ├── pyramid_neck.py         # ViT features → 4-level pyramid (Section 4)
+│   ├── spd.py                  # Main model: encode + neck + pre-compute + decode
+│   ├── encoder.py              # ConvNeXt V2-T wrapper (load pre-trained, extract stages)
+│   ├── pyramid_neck.py         # Channel projection + L4 self-attention (Section 4)
 │   ├── precompute.py           # KV projections, W_V projections, calibration (Section 5)
 │   ├── query_encoder.py        # B1: Feature extraction + token construction (Section 6.1)
 │   ├── local_cross_attn.py     # B2: 2-layer cross-attn over 91 tokens (Section 6.2)
@@ -449,7 +493,7 @@ src/spd/
 ### 10.2 Dependencies
 
 - PyTorch ≥ 2.0 (for `F.grid_sample`, `F.scaled_dot_product_attention`)
-- `depth_anything_v2` (from `src/f3/tasks/depth/depth_anything_v2/`) — ViT-S encoder weights
+- `timm` — ConvNeXt V2-T pre-trained weights (`convnextv2_tiny.fcmae_ft_in1k`)
 - NYU Depth V2 dataset (download via standard script)
 
 ### 10.3 Build Order
@@ -458,8 +502,8 @@ Each step is independently testable. Do not proceed if the current step fails.
 
 | Step | What to build | How to validate |
 |------|--------------|-----------------|
-| 1 | DAv2-S encoder + pyramid neck | Verify output shapes: L1 [B,64,148,148], L2 [B,128,74,74], L3 [B,192,37,37], L4 [B,384,18,18]. Visual sanity check: PCA of L3 features should show semantic structure. |
-| 2 | Pre-compute module | Verify KV shapes [324, 192], $\hat{L}$ shapes, calibration scalars. |
+| 1 | ConvNeXt V2-T encoder + projection neck + L4 self-attn | Verify output shapes: L1 [B,64,120,160], L2 [B,128,60,80], L3 [B,192,30,40], L4 [B,384,15,20]. PCA of L3/L4 features should show semantic structure. |
+| 2 | Pre-compute module | Verify KV shapes [300, 192], $\hat{L}$ shapes, calibration scalars. |
 | 3 | B1 token construction | Verify $\mathcal{T}_{\text{unified}}$ shape [B, K, 91, 192], $h^{(0)}$ shape [B, K, 192]. Test with random queries. |
 | 4 | B2 local cross-attn + simple depth head | Train with $L_{\text{point}}$ only. Should achieve non-trivial AbsRel (< 0.3) on NYU. This validates the local-only decoder. |
 | 5 | B3 global cross-attn + routing | Add B3. Verify routing selects diverse L4 positions (monitor attention entropy). |
