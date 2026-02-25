@@ -32,7 +32,10 @@ class CrossAttnLayer(nn.Module):
         k = K.unsqueeze(1).view(B, 1, N, self.n_head, self.d_head).transpose(2, 3)
         v = V.unsqueeze(1).view(B, 1, N, self.n_head, self.d_head).transpose(2, 3)
 
-        attn_out = F.scaled_dot_product_attention(q, k, v)
+        attn_out = F.scaled_dot_product_attention(
+            q, k, v,
+            dropout_p=0.1 if self.training else 0.0
+        )
         attn_out = attn_out.squeeze(3).view(B, n_q, D)
         attn_out = self.wo(attn_out)
 

@@ -1,12 +1,13 @@
 import torch
+import torch.nn.functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 
 from models.spd import SPD
-from utils.losses import l_silog
+from utils.losses import l_silog, l_dense_silog
 from data.nyu_dataset import NYUDataset
 from evaluate import evaluate
-from config import EPOCHS
+from config import EPOCHS, H_IMG, W_IMG
 
 
 def build_optimizer(model):
@@ -35,16 +36,23 @@ def train():
 
     for epoch in range(EPOCHS):
         model.train()
-        for step, (images, coords, gt_depth) in enumerate(train_loader):
+        for step, (images, coords, gt_depth, depth_map) in enumerate(train_loader):
             images = images.to(device)
             coords = coords.to(device)
             gt_depth = gt_depth.to(device)
+            depth_map = depth_map.to(device)
 
             optimizer.zero_grad()
 
             with torch.amp.autocast('cuda', dtype=torch.bfloat16):
-                pred_depth = model(images, coords)
-                loss = l_silog(pred_depth, gt_depth)
+                pred_depth, aux_l2, aux_l3 = model(images, coords)
+
+                gt_l2 = F.interpolate(depth_map, scale_factor=0.125, mode='bilinear', align_corners=True)
+                gt_l3 = F.interpolate(depth_map, scale_factor=0.0625, mode='bilinear', align_corners=True)
+
+                loss_main = l_silog(pred_depth, gt_depth)
+                loss_aux_l2 = l_dense_silog(aux_l2, gt_l2) + l_dense_silog(aux_l3, gt_l3)
+                loss = loss_main + 0.5 * loss_aux_l2
 
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)

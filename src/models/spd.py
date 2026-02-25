@@ -21,12 +21,18 @@ class SPD(nn.Module):
         self.global_cross_attn = GlobalCrossAttn()
         self.depth_head = DepthHead()
 
+        self.aux_head_l2 = nn.Conv2d(192, 1, kernel_size=1)
+        self.aux_head_l3 = nn.Conv2d(192, 1, kernel_size=1)
 
-    def forward(self, images: torch.Tensor, query_coords: torch.Tensor,
-                return_debug: bool = False) -> torch.Tensor:
+
+    def forward(self, images: torch.Tensor, query_coords: torch.Tensor) -> torch.Tensor:
 
         features = self.encoder(images)
         features = self.neck(features)
+        if self.training:
+            aux_l2 = torch.exp(self.aux_head_l2(features['L2']))  # [B, 1, H_l2, W_l2]
+            aux_l3 = torch.exp(self.aux_head_l3(features['L3']))  # [B, 1, H_l3, W_l3]
+
         features = self.precompute(features)
 
         canvas_L2 = features['L2'].clone()  # [B, d_model, H_l2, W_l2]
@@ -42,6 +48,8 @@ class SPD(nn.Module):
 
         depth = torch.exp(log_depth)           # metric depth
 
+        if self.training:
+            return depth, aux_l2, aux_l3
         return depth
 
 

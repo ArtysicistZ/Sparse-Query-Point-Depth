@@ -58,13 +58,15 @@ class NYUDataset(Dataset):
 
         query_coords = torch.tensor(np.stack((qx, qy), axis=-1), dtype=torch.float32)
         gt_depth = torch.tensor(depth[qy, qx], dtype=torch.float32)
+        depth_map = torch.from_numpy(depth).unsqueeze(0)  # [1, H, W]
 
-        return image, query_coords, gt_depth
-    
+        return image, query_coords, gt_depth, depth_map
+
 
 if __name__ == "__main__":
     ds = NYUDataset(split="train", K=16)
-    image, coords, gt_depth = ds[0]
+    image, coords, gt_depth, depth_map = ds[0]
     print(f"image: {image.shape}, range [{image.min():.2f}, {image.max():.2f}]")
     print(f"coords: {coords.shape}")
     print(f"gt_depth: {gt_depth.shape}, range [{gt_depth.min():.2f}, {gt_depth.max():.2f}]")
+    print(f"depth_map: {depth_map.shape}, range [{depth_map.min():.2f}, {depth_map.max():.2f}]")

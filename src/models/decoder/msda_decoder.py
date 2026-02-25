@@ -29,7 +29,7 @@ class MSDADecoderLayer(nn.Module):
         self.q2q = Q2QBlock(d_model=d_model)
 
     def forward(self, h: torch.Tensor, pos_q: torch.Tensor, features: dict[str, torch.Tensor], canvas_L2: torch.Tensor, canvas_L3: torch.Tensor, center_grid: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
-        
+
         h = self.msda(h, features, center_grid)
         h, canvas_L2, canvas_L3 = self.canvas_layer(h, canvas_L2, canvas_L3, center_grid, coords)
         h = self.q2q(h, pos_q)
@@ -107,7 +107,11 @@ class Q2QBlock(nn.Module):
         super().__init__()
 
         self.ln1 = nn.LayerNorm(d_model)
-        self.self_attn = nn.MultiheadAttention(d_model, n_head, batch_first=True)
+        self.self_attn = nn.MultiheadAttention(
+            d_model, n_head, 
+            batch_first=True,
+            dropout=0.1
+        )
 
         self.ln2 = nn.LayerNorm(d_model)
         self.ffn = nn.Sequential(

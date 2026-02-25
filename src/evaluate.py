@@ -3,7 +3,6 @@ import numpy as np
 
 from torch.utils.data import DataLoader
 from data.nyu_dataset import NYUDataset
-from config import H_IMG, W_IMG
 
 
 def evaluate(model, device, verbose=True):
@@ -19,23 +18,19 @@ def evaluate(model, device, verbose=True):
     all_pred = []
     all_gt = []
     all_log_depth = []
-    all_top_l3 = []
-    all_top_l4 = []
 
     with torch.no_grad():
-        for cnt, (image, coords, gt_depth) in enumerate(val_loader):
+        for cnt, (image, coords, gt_depth, _) in enumerate(val_loader):
             image = image.to(device)
             coords = coords.to(device)
             gt_depth = gt_depth.to(device)
 
             with torch.amp.autocast('cuda', dtype=torch.bfloat16):
-                depth, debug = model(image, coords, return_debug=True)
+                depth = model(image, coords)
 
             all_pred.append(depth.float().cpu())
             all_gt.append(gt_depth.float().cpu())
-            all_log_depth.append(debug['log_depth'].float().cpu())
-            all_top_l3.append(debug['top_indices_l3'].cpu())
-            all_top_l4.append(debug['top_indices_l4'].cpu())
+            all_log_depth.append(torch.log(depth).float().cpu())
 
             if verbose and cnt % 20 == 0:
                 print(f"  eval {cnt}/{len(val_loader)}")
@@ -44,8 +39,6 @@ def evaluate(model, device, verbose=True):
     pred = torch.cat(all_pred, dim=0)
     gt = torch.cat(all_gt, dim=0)
     log_d = torch.cat(all_log_depth, dim=0)
-    top_l3 = torch.cat(all_top_l3, dim=0)  # [N, K, 20]
-    top_l4 = torch.cat(all_top_l4, dim=0)  # [N, K, 10]
 
     # Flatten for global metrics
     p = pred.reshape(-1)
@@ -138,18 +131,6 @@ def evaluate(model, device, verbose=True):
     improvement_pct = (abs_rel - abs_rel_scaled) / (abs_rel + 1e-8) * 100
 
     # ============================
-    #  7. Routing Diversity
-    # ============================
-    n_l3 = (H_IMG // 16) * (W_IMG // 16)
-    n_l4 = (H_IMG // 32) * (W_IMG // 32)
-    N_img = top_l3.shape[0]
-
-    l3_uniq = [top_l3[i].reshape(-1).unique().numel() for i in range(N_img)]
-    l4_uniq = [top_l4[i].reshape(-1).unique().numel() for i in range(N_img)]
-    l3_uniq_mean, l3_uniq_std = np.mean(l3_uniq), np.std(l3_uniq)
-    l4_uniq_mean, l4_uniq_std = np.mean(l4_uniq), np.std(l4_uniq)
-
-    # ============================
     #  Print Report
     # ============================
     if verbose:
@@ -177,7 +158,7 @@ def evaluate(model, device, verbose=True):
         print(f"    Within 2x of GT: {within_2x:.1f}%")
 
         print(f"\n  [Log-Depth Head]")
-        print(f"    mean={ld_mean:.4f}  std={ld_std:.4f}  [{ld_min:.4f}, {ld_max:.4f}]  (init=0.916)")
+        print(f"    mean={ld_mean:.4f}  std={ld_std:.4f}  [{ld_min:.4f}, {ld_max:.4f}]  (init=0)")
         if ld_std < 0.1:
             print(f"    !! HEAD NOT LEARNING (std < 0.1, predictions ~constant)")
         elif ld_std < 0.3:
@@ -208,19 +189,6 @@ def evaluate(model, device, verbose=True):
         if improvement_pct > 20:
             print(f"    !! SCALE BIAS: model learned structure but not scale")
         else:
-            print(f"    OK")
-
-        print(f"\n  [Routing Diversity]")
-        print(f"    L3 ({n_l3:>3d} total): {l3_uniq_mean:.1f} +/- {l3_uniq_std:.1f} unique/img "
-              f"({l3_uniq_mean / n_l3 * 100:.1f}%)")
-        print(f"    L4 ({n_l4:>3d} total): {l4_uniq_mean:.1f} +/- {l4_uniq_std:.1f} unique/img "
-              f"({l4_uniq_mean / n_l4 * 100:.1f}%)")
-        # Collapse: unique count barely exceeds the top-k value itself
-        if l3_uniq_mean < 30:
-            print(f"    !! L3 ROUTING COLLAPSE (all queries pick ~same 20 positions)")
-        if l4_uniq_mean < 15:
-            print(f"    !! L4 ROUTING COLLAPSE (all queries pick ~same 10 positions)")
-        if l3_uniq_mean >= 30 and l4_uniq_mean >= 15:
             print(f"    OK")
 
         print("=" * 65)
