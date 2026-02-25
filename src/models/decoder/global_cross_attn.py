@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from spatial_canvas import CanvasLayer, CanvasSmooth
+
 class CrossAttnLayer(nn.Module):
 
     def __init__(self, d_model: int = 192, n_head: int = 6):
@@ -22,8 +24,11 @@ class CrossAttnLayer(nn.Module):
             nn.Linear(4 * d_model, d_model)
         )
 
+        self.canvas_layer = CanvasLayer(d_model=d_model)
+        self.canvas_smooth = CanvasSmooth(d_model=d_model)
 
-    def forward(self, h: torch.Tensor, K, V) -> torch.Tensor:
+
+    def forward(self, h: torch.Tensor, canvas_L2: torch.Tensor, canvas_L3: torch.Tensor, K, V, center_grid: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
 
         B, n_q, D = h.shape
         N = K.shape[1]
@@ -40,7 +45,11 @@ class CrossAttnLayer(nn.Module):
 
         h = residual + attn_out  # Residual connection
         h = h + self.ffn(self.ln_ff(h))  # FFN with residual
-        return h
+
+        # canvas
+        h, canvas_L2, canvas_L3 = self.canvas_layer(h, canvas_L2, canvas_L3, center_grid, coords)
+        canvas_L2, canvas_L3 = self.canvas_smooth(canvas_L2, canvas_L3)
+        return h, canvas_L2, canvas_L3
 
     
 
@@ -52,8 +61,8 @@ class GlobalCrossAttn(nn.Module):
             CrossAttnLayer(d_model, n_head) for _ in range(num_layers)
         ])
 
-    def forward(self, h: torch.Tensor, precomputed: dict, lev: int) -> torch.Tensor:
+    def forward(self, h: torch.Tensor, canvas_L2: torch.Tensor, canvas_L3: torch.Tensor, precomputed: dict, lev: int, center_grid: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
+        
         for i, layer in enumerate(self.layers):
-            h, _ = layer(h, precomputed[f'K_{i}_l{lev}'], precomputed[f'V_{i}_l{lev}'])
-        return h
-    
+            h, canvas_L2, canvas_L3 = layer(h, canvas_L2, canvas_L3, precomputed[f'K_{i}_l{lev}'], precomputed[f'V_{i}_l{lev}'], center_grid, coords)
+        return h, canvas_L2, canvas_L3

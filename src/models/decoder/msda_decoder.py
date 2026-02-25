@@ -2,6 +2,41 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from spatial_canvas import CanvasSmooth, CanvasLayer
+
+class MSDADecoder(nn.Module):
+    
+    def __init__(self, d_model: int = 192, n_layers: int = 3):
+        super().__init__()
+        self.layers = nn.ModuleList([
+            MSDADecoderLayer(d_model=d_model) for _ in range(n_layers)
+        ])
+
+
+    def forward(self, h: torch.Tensor, pos_q: torch.Tensor, features: dict[str, torch.Tensor], canvas_L2: torch.Tensor, canvas_L3: torch.Tensor, center_grid: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
+        for layer in self.layers:
+            h, canvas_L2, canvas_L3 = layer(h, pos_q, features, canvas_L2, canvas_L3, center_grid, coords)
+        return h
+
+
+
+class MSDADecoderLayer(nn.Module):
+
+    def __init__(self, d_model: int = 192):
+        super().__init__()
+        self.msda = MSDABlock(d_model=d_model)
+        self.q2q = Q2QBlock(d_model=d_model)
+        self.canvas_layer = CanvasLayer(d_model=d_model)
+        self.canvas_smooth = CanvasSmooth(d_model=d_model)
+
+    def forward(self, h: torch.Tensor, pos_q: torch.Tensor, features: dict[str, torch.Tensor], canvas_L2: torch.Tensor, canvas_L3: torch.Tensor, center_grid: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
+        h = self.msda(h, features, center_grid)
+        h, canvas_L2, canvas_L3 = self.canvas_layer(h, canvas_L2, canvas_L3, center_grid, coords)
+        canvas_L2, canvas_L3 = self.canvas_smooth(canvas_L2, canvas_L3)
+        h = self.q2q(h, pos_q)
+        return h, canvas_L2, canvas_L3
+
+
 class MSDABlock(nn.Module):
 
     def __init__(self, d_model: int = 192, n_head: int = 6, n_levels: int = 4, n_points: int = 4):
@@ -63,6 +98,36 @@ class MSDABlock(nn.Module):
         output = torch.stack(sampled_feats, dim=0).sum(dim=0)  # [B, K, n_head, d_head]
         output = output.reshape(B, K, D)  # [B, K, d_model]
         return h + output
+    
+
+
+class Q2QBlock(nn.Module):
+
+    def __init__(self, d_model: int = 192, n_head: int = 6, ffn_ratio: int = 4):
+        super().__init__()
+
+        self.ln1 = nn.LayerNorm(d_model)
+        self.self_attn = nn.MultiheadAttention(d_model, n_head, batch_first=True)
+
+        self.ln2 = nn.LayerNorm(d_model)
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, ffn_ratio * d_model),
+            nn.GELU(),
+            nn.Linear(ffn_ratio * d_model, d_model)
+        )
+
+
+    def forward(self, h: torch.Tensor, pos_q: torch.Tensor) -> torch.Tensor:
+        h_norm = self.ln1(h)
+        q = h_norm + pos_q
+        k = h_norm + pos_q
+        v = h_norm
+        attn_out, _ = self.self_attn(q, k, v)  # [B, K, d_model]
+        h = h + attn_out
+
+        h_norm = self.ln2(h)
+        ffn_out = self.ffn(h_norm)  # [B, K, d_model]
+        return h + ffn_out
     
 
 

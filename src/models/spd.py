@@ -25,7 +25,7 @@ class SPD(nn.Module):
         features = self.neck(features)
         features = self.precompute(features)
 
-        seed, pos, center_grid = self.b1(features, query_coords)
+        seed, pos_q, center_grid = self.b1(features, query_coords)
         
         h = self.b3(seed, features)
 
