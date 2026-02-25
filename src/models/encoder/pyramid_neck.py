@@ -8,7 +8,7 @@ class ProjectionNeck(nn.Module):
 
     def __init__(self, 
                  enc_channels: list[int] = [96, 192, 384, 768], 
-                 dec_channels: list[int] = [64, 128, 192, 384]):
+                 dec_channels: list[int] = [192, 192, 192, 192]):
         
         super().__init__()
         self.projections = nn.ModuleList([
@@ -42,7 +42,7 @@ class ProjectionNeck(nn.Module):
 class SelfAttentionLayer(nn.Module):
     """One layer of self-attention for the L4 feature map."""
 
-    def __init__(self, d_model: int = 384, n_head: int = 6, ffn_ratio: int = 4):
+    def __init__(self, d_model: int = 192, n_head: int = 6, ffn_ratio: int = 4):
         super().__init__()
         self.n_head = n_head
         self.d_head = d_model // n_head
@@ -89,14 +89,14 @@ class SelfAttentionLayer(nn.Module):
 
 class SelfAttention(nn.Module):
 
-    def __init__(self, d_model: int = 384, num_layers: int = 2):
+    def __init__(self, d_model: int = 192, num_layers: int = 2):
         super().__init__()
         self.layers = nn.ModuleList([
             SelfAttentionLayer(d_model) for _ in range(num_layers)
         ])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """x: [B, 384, H, W] → [B, 384, H, W]"""
+        """x: [B, 192, H, W] → [B, 192, H, W]"""
         B, C, H, W = x.shape
         x = x.reshape(B, C, -1).transpose(1, 2)
 

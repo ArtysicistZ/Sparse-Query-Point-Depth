@@ -23,7 +23,7 @@ class CrossAttnLayer(nn.Module):
         )
 
 
-    def forward(self, h: torch.Tensor, K, V, ret_attn: bool) -> torch.Tensor:
+    def forward(self, h: torch.Tensor, K, V) -> torch.Tensor:
 
         B, n_q, D = h.shape
         N = K.shape[1]
@@ -34,50 +34,17 @@ class CrossAttnLayer(nn.Module):
         k = K.unsqueeze(1).view(B, 1, N, self.n_head, self.d_head).transpose(2, 3)
         v = V.unsqueeze(1).view(B, 1, N, self.n_head, self.d_head).transpose(2, 3)
 
-        if ret_attn:
-            scale = self.d_head ** -0.5
-            attn_weights = F.softmax(q @ k.transpose(-2, -1) * scale, dim=-1)
-            attn_out = attn_weights @ v
-            attn_out = attn_out.squeeze(3).view(B, n_q, D)
-            attn_out = self.wo(attn_out)
+        attn_out = F.scaled_dot_product_attention(q, k, v)
+        attn_out = attn_out.squeeze(3).view(B, n_q, D)
+        attn_out = self.wo(attn_out)
 
-            h = residual + attn_out  # Residual connection
-            h = h + self.ffn(self.ln_ff(h))  # FFN with residual
-            return h, attn_weights
-        
-        else:
-            attn_out = F.scaled_dot_product_attention(q, k, v)
-            attn_out = attn_out.squeeze(3).view(B, n_q, D)
-            attn_out = self.wo(attn_out)
+        h = residual + attn_out  # Residual connection
+        h = h + self.ffn(self.ln_ff(h))  # FFN with residual
+        return h
 
-            h = residual + attn_out  # Residual connection
-            h = h + self.ffn(self.ln_ff(h))  # FFN with residual
-            return h, None
-
-        
     
-    
+
 class GlobalCrossAttn(nn.Module):
-
-    def __init__(self, d_model: int = 192, n_head: int = 6, num_layers: int = 2):
-        super().__init__()
-        self.layers = nn.ModuleList([
-            CrossAttnLayer(d_model, n_head) for _ in range(num_layers)
-        ])
-
-    def forward(self, h: torch.Tensor, precomputed: dict, lev: int, queries: int) -> torch.Tensor:
-        for i, layer in enumerate(self.layers):
-            if i == len(self.layers) - 1:  # Last layer, return attn weights for routing
-                h, attn_weight = layer(h, precomputed[f'K_{i}_l{lev}'], precomputed[f'V_{i}_l{lev}'], ret_attn=True)
-            else:
-                h, _ = layer(h, precomputed[f'K_{i}_l{lev}'], precomputed[f'V_{i}_l{lev}'], ret_attn=False)
-
-        avg_attn = attn_weight.squeeze(3).mean(dim=2) 
-        _, top_indices = avg_attn.topk(queries, dim=-1)
-        return h, top_indices
-    
-
-class GlobalCrossAttnNoRouting(nn.Module):
 
     def __init__(self, d_model: int = 192, n_head: int = 6, num_layers: int = 2):
         super().__init__()
@@ -87,7 +54,6 @@ class GlobalCrossAttnNoRouting(nn.Module):
 
     def forward(self, h: torch.Tensor, precomputed: dict, lev: int) -> torch.Tensor:
         for i, layer in enumerate(self.layers):
-            h, _ = layer(h, precomputed[f'K_{i}_l{lev}'], precomputed[f'V_{i}_l{lev}'], ret_attn=False)
+            h, _ = layer(h, precomputed[f'K_{i}_l{lev}'], precomputed[f'V_{i}_l{lev}'])
         return h
-    
     
