@@ -83,13 +83,3 @@ class FusedDecoder(nn.Module):
         for layer in self.layers:
             h = layer(h, fused_tokens)
         return self.depth_head(h).squeeze(-1)  # [B, K]
-
-
-if __name__ == "__main__":
-    h = torch.randn(2, 16, 192)
-    tokens = torch.randn(2, 16, 123, 192)
-
-    model = FusedDecoder()
-    r_q = model(h, tokens)
-    print(f"r_q: {r_q.shape}")  # expect [2, 16]
-    print(f"params: {sum(p.numel() for p in model.parameters()) / 1e3:.1f}K")

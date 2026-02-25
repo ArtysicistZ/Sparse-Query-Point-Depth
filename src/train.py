@@ -53,7 +53,14 @@ def train():
             scaler.update()
 
             if step % 10 == 0:
-                print(f"Epoch {epoch+1}, Step {step}/{len(train_loader)}, Loss: {loss.item():.4f}")
+                with torch.no_grad():
+                    p_mean = pred_depth.mean().item()
+                    p_std = pred_depth.std().item()
+                print(f"Epoch {epoch+1}, Step {step}/{len(train_loader)}, "
+                      f"Loss: {loss.item():.4f}, "
+                      f"pred: {p_mean:.2f}+/-{p_std:.2f} "
+                      f"[{pred_depth.min().item():.2f}, {pred_depth.max().item():.2f}], "
+                      f"gt: [{gt_depth.min().item():.2f}, {gt_depth.max().item():.2f}]")
 
         scheduler.step()
         absrel = evaluate(model, device)

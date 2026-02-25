@@ -126,6 +126,67 @@ All experiments show: fast initial learning (epoch 1-2), then regression or plat
 
 ---
 
+## Exp 5: v13.1 — B1→B2→B3a→B3b→B5, SILog only (λ=0.5), depth head bias
+- **Architecture:** v13.1 redesign — separate B3a (L3, 20 routed) + B3b (L4, 10 routed), B5 fused (33 tokens: 3 central + 20 L3 + 10 L4), no B4
+- **Depth head:** bias init log(2.5) = 0.916
+- **Loss:** L_silog only, λ_var=0.5
+- **Batch:** 8, K=256
+- **Scheduler:** CosineAnnealingLR, T_max=10, eta_min=1e-6
+
+| Epoch | Train Loss (end) | AbsRel | Pred Range | GT Range | Notes |
+|-------|-----------------|--------|------------|----------|-------|
+| 1     | ~0.13           | 0.267  | [0.70, 4.41] | [0.71, 9.90] | Pred max ~4.4m, similar to Exp 1-2 start |
+| 2     | ~0.10           | 0.238  | [0.80, 5.53] | [0.71, 9.90] | Improving, max pred +1.1m |
+| 3     | ~0.09           | 0.230  | [0.85, 6.17] | [0.71, 9.94] | **Best.** Max pred +0.6m, still growing |
+| 4     | ~0.08           | 0.262  | [0.82, 5.32] | [0.71, 9.90] | **Overfit.** Train loss ↓ but val AbsRel ↑, max pred shrinking |
+
+**Conclusion:** Best AbsRel 0.230 at epoch 3, matching Exp 3's best (0.231). Overfits after epoch 3 — train loss keeps decreasing (0.09→0.08) but val AbsRel regresses (0.230→0.262). The v13.1 architecture changes (separate B3a/B3b, type embeddings, bias init, no B4) did not break anything but also did not significantly improve over Exp 3. Pred max reached ~6.2m (vs ~5.9m in Exp 3), slightly better far-depth reach. Overfitting after 3-4 epochs is a consistent pattern across all experiments.
+
+**Next steps to investigate:**
+1. Add regularization (dropout in decoder, stronger weight decay)
+2. Data augmentation (random crop, color jitter, horizontal flip)
+3. Increase K (more query points per image for denser supervision)
+4. Early stopping at epoch 3
+5. Run with new detailed evaluation metrics to diagnose failure modes
+
+---
+
+## Exp 6: v13.1 + ImageNet norm + per-image SILog (λ=0.5) + augmentation
+- **Architecture:** Same as Exp 5
+- **Fixes:** ImageNet normalization, per-image SILog (was global), data augmentation (flip + color jitter)
+- **Loss:** L_silog per-image, λ_var=0.5
+- **Batch:** 8, K=256
+- **Scheduler:** CosineAnnealingLR, T_max=10, eta_min=1e-6
+
+| Epoch | AbsRel | Pred Range | GT Range | L3 Routing | Notes |
+|-------|--------|------------|----------|------------|-------|
+| 1     | 0.261  | [0.67, 5.24] | [0.71, 9.95] | 67.6 unique | Slower start than Exp 5 |
+| 2     | 0.259  | [0.69, 5.24] | [0.71, 9.90] | 48.4 unique | Barely improving, pred max stuck |
+| 3     | 0.254  | [0.74, 5.80] | [0.71, 9.94] | 43.4 unique | Slight improvement, routing collapsing |
+
+**Conclusion:** Per-image SILog with λ=0.5 forgives too much scale error → 5× slower learning than Exp 5. Augmentation prevents overfitting (no regression at ep3) but learning is too slow. Routing diversity declining. Stopped after epoch 3.
+
+---
+
+## Exp 7: v13.1 + all fixes + SILog (λ=0.15)
+- **Architecture:** Same as Exp 5
+- **Fixes:** ImageNet normalization, per-image SILog, data augmentation (flip + color jitter)
+- **Loss:** L_silog per-image, λ_var=0.15 (stronger metric signal)
+- **Batch:** 8, K=256
+- **Scheduler:** CosineAnnealingLR, T_max=10, eta_min=1e-6
+
+| Epoch | AbsRel | Pred Range | s* | L3 Routing | 5-10m AbsRel | Notes |
+|-------|--------|------------|-----|------------|-------------|-------|
+| 1     | 0.297  | [0.61, 4.73] | 1.383 | 70.9 unique | 0.517 | Slow start, scale off (38%), routing healthy |
+| 2     | **0.239** | [0.70, 4.73] | 1.165 | 57.2 unique | 0.476 | **Best.** Scale nearly correct, pred max stuck at 4.73 |
+| 3     | 0.259  | [0.69, 5.94] | 1.260 | 49.1 unique | 0.479 | Overfit. Pred max broke through (5.94) but overall regressed |
+
+**Conclusion:** λ=0.15 successfully fixed scale learning (s* 1.38→1.17 in one epoch). Best AbsRel 0.239 at epoch 2, comparable to Exp 5's 0.238. But pred max ceiling at 4.73m persists (log-depth head capped at ~1.55). Routing collapses by epoch 3 (70.9→49.1). 5-10m range remains catastrophic (~0.48 AbsRel). The ~0.23 AbsRel ceiling appears fundamental to the current architecture — consistent across Exp 3, 5, 6, 7 regardless of loss function.
+
+**Key insight:** Dense models get spatial smoothness from convolutions for free — each pixel prediction is informed by neighboring predictions. SPD query points are isolated predictions with no spatial prior, making the task fundamentally harder per-point.
+
+---
+
 ## Architecture Variants Tested
 | Config | Params (decoder) | AbsRel (best) | Notes |
 |--------|-----------------|---------------|-------|
@@ -133,3 +194,6 @@ All experiments show: fast initial learning (epoch 1-2), then regression or plat
 | B1-B3 + calib + L_point+SILog | ~2.3M | 0.256 | Far depths still compressed |
 | B1-B5 + log-depth + L_point+SILog | ~3.9M | 0.231 (ep2) | L_point caused ep3 regression |
 | B1-B5 + log-depth + SILog(λ=0.85) | ~3.9M | 0.239 (ep1) | Ep2 regression, architectural issue confirmed |
+| v13.1: SILog(λ=0.5), no aug | ~3.9M | 0.230 (ep3) | Overfits after ep3, max pred ~6.2m |
+| v13.1: SILog(λ=0.5), per-img+aug | ~3.9M | 0.254 (ep3) | No overfit but 5× slower learning |
+| **v13.1: SILog(λ=0.15), per-img+aug** | ~3.9M | **0.239 (ep2)** | Scale fixed, routing collapse + pred ceiling persist |

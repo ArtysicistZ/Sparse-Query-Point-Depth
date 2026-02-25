@@ -1,4 +1,3 @@
-from matplotlib.pyplot import grid
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -141,27 +140,12 @@ class TokenConstructor(nn.Module):
 
         final_tokens = torch.cat([l1_token, l2_token, l3_token, l4_token], dim=2)  # [B, K, 91, d_model]
 
-        grid = grid_pts_norm.unsqueeze(2)  # [B, K, 32, 1, 2]
         
-        cq_2 = F.grid_sample(features['L2_proj'], grid, align_corners=True).squeeze(-1).transpose(1, 2) + self.e_c2  # [B, K, C]
-        cq_3 = F.grid_sample(features['L3_proj'], grid, align_corners=True).squeeze(-1).transpose(1, 2) + self.e_c3  # [B, K, C]
-        cq_4 = F.grid_sample(features['L4_proj'], grid, align_corners=True).squeeze(-1).transpose(1, 2) + self.e_c4  # [B, K, C]
+        cq_2 = F.grid_sample(features['L2_proj'], center_grid, align_corners=True).squeeze(-1).transpose(1, 2) + self.e_c2  # [B, K, C]
+        cq_3 = F.grid_sample(features['L3_proj'], center_grid, align_corners=True).squeeze(-1).transpose(1, 2) + self.e_c3  # [B, K, C]
+        cq_4 = F.grid_sample(features['L4_proj'], center_grid, align_corners=True).squeeze(-1).transpose(1, 2) + self.e_c4  # [B, K, C]
 
         center_tokens = torch.stack([cq_2, cq_3, cq_4], dim=2)  # [B, K, 3, d_model]
 
         return final_tokens, center_tokens, seed
 
-
-if __name__ == "__main__":
-    features = {
-        'L1': torch.randn(2, 64, 120, 160),
-        'L2': torch.randn(2, 128, 60, 80),
-        'L3': torch.randn(2, 192, 30, 40),
-        'L4': torch.randn(2, 384, 15, 20),
-    }
-    coords = torch.randint(0, 480, (2, 16, 2)).float()  # B=2, K=16 query points
-
-    model = TokenConstructor()
-    tokens, seed = model(features, coords)
-    print(f"tokens: {tokens.shape}")  # expect [2, 16, 91, 192]
-    print(f"seed:   {seed.shape}")    # expect [2, 16, 192]
