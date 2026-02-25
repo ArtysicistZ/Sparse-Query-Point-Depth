@@ -25,13 +25,14 @@ class MSDADecoderLayer(nn.Module):
     def __init__(self, d_model: int = 192):
         super().__init__()
         self.msda = MSDABlock(d_model=d_model)
-        self.q2q = Q2QBlock(d_model=d_model)
         self.canvas_layer = CanvasLayer(d_model=d_model)
+        self.q2q = Q2QBlock(d_model=d_model)
 
     def forward(self, h: torch.Tensor, pos_q: torch.Tensor, features: dict[str, torch.Tensor], canvas_L2: torch.Tensor, canvas_L3: torch.Tensor, center_grid: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
+        
         h = self.msda(h, features, center_grid)
-        h = self.q2q(h, pos_q)
         h, canvas_L2, canvas_L3 = self.canvas_layer(h, canvas_L2, canvas_L3, center_grid, coords)
+        h = self.q2q(h, pos_q)
         return h, canvas_L2, canvas_L3
 
 
@@ -95,7 +96,8 @@ class MSDABlock(nn.Module):
 
         output = torch.stack(sampled_feats, dim=0).sum(dim=0)  # [B, K, n_head, d_head]
         output = output.reshape(B, K, D)  # [B, K, d_model]
-        return h + output
+        h = h + self.W_o(output)  # [B, K, d_model]
+        return h
     
 
 

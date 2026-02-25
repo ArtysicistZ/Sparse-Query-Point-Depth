@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from models.decoder.spatial_canvas import CanvasLayer
+from models.decoder.msda_decoder import Q2QBlock
 
 class CrossAttnLayer(nn.Module):
 
@@ -16,18 +17,11 @@ class CrossAttnLayer(nn.Module):
         self.wq = nn.Linear(d_model, d_model)
         self.wo = nn.Linear(d_model, d_model)
 
-        self.ln_ff = nn.LayerNorm(d_model)
-
-        self.ffn = nn.Sequential(
-            nn.Linear(d_model, 4 * d_model),
-            nn.GELU(),
-            nn.Linear(4 * d_model, d_model)
-        )
-
         self.canvas_layer = CanvasLayer(d_model=d_model)
+        self.q2q = Q2QBlock(d_model=d_model)
 
 
-    def forward(self, h: torch.Tensor, canvas_L2: torch.Tensor, canvas_L3: torch.Tensor, K, V, center_grid: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
+    def forward(self, h: torch.Tensor, pos_q: torch.Tensor, canvas_L2: torch.Tensor, canvas_L3: torch.Tensor, K, V, center_grid: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
 
         B, n_q, D = h.shape
         N = K.shape[1]
@@ -43,10 +37,11 @@ class CrossAttnLayer(nn.Module):
         attn_out = self.wo(attn_out)
 
         h = residual + attn_out  # Residual connection
-        h = h + self.ffn(self.ln_ff(h))  # FFN with residual
 
-        # canvas
+        # canvas + q2q
         h, canvas_L2, canvas_L3 = self.canvas_layer(h, canvas_L2, canvas_L3, center_grid, coords)
+
+        h = self.q2q(h, pos_q)
 
         return h, canvas_L2, canvas_L3
 
@@ -60,8 +55,8 @@ class GlobalCrossAttn(nn.Module):
             CrossAttnLayer(d_model, n_head) for _ in range(num_layers)
         ])
 
-    def forward(self, h: torch.Tensor, canvas_L2: torch.Tensor, canvas_L3: torch.Tensor, precomputed: dict, lev: int, center_grid: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
-        
+    def forward(self, h: torch.Tensor, pos_q: torch.Tensor, canvas_L2: torch.Tensor, canvas_L3: torch.Tensor, precomputed: dict, lev: int, center_grid: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
+
         for i, layer in enumerate(self.layers):
-            h, canvas_L2, canvas_L3 = layer(h, canvas_L2, canvas_L3, precomputed[f'K_{i}_l{lev}'], precomputed[f'V_{i}_l{lev}'], center_grid, coords)
+            h, canvas_L2, canvas_L3 = layer(h, pos_q, canvas_L2, canvas_L3, precomputed[f'K_{i}_l{lev}'], precomputed[f'V_{i}_l{lev}'], center_grid, coords)
         return h, canvas_L2, canvas_L3

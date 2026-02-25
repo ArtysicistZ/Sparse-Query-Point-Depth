@@ -36,9 +36,9 @@ class SPD(nn.Module):
 
         h, canvas_L2, canvas_L3 = self.msda_decoder(h, pos_q, features, canvas_L2, canvas_L3, center_grid, query_coords)
 
-        h, canvas_L2, canvas_L3 = self.global_cross_attn(h, canvas_L2, canvas_L3, features, lev=4, center_grid=center_grid, coords=query_coords)
+        h, canvas_L2, canvas_L3 = self.global_cross_attn(h, pos_q, canvas_L2, canvas_L3, features, lev=4, center_grid=center_grid, coords=query_coords)
 
-        log_depth = self.depth_head(h, canvas_L2, canvas_L3, center_grid)
+        log_depth = self.depth_head(h)
 
         depth = torch.exp(log_depth)           # metric depth
 
