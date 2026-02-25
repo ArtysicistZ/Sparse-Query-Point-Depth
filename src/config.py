@@ -1,2 +1,4 @@
 H_IMG = 256
 W_IMG = 320
+
+EPOCHS = 10

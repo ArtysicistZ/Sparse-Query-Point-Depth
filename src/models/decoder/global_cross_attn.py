@@ -12,8 +12,6 @@ class CrossAttnLayer(nn.Module):
         self.ln_q = nn.LayerNorm(d_model)
 
         self.wq = nn.Linear(d_model, d_model)
-        self.wk = nn.Linear(d_model, d_model)
-        self.wv = nn.Linear(d_model, d_model)
         self.wo = nn.Linear(d_model, d_model)
 
         self.ln_ff = nn.LayerNorm(d_model)
@@ -25,46 +23,37 @@ class CrossAttnLayer(nn.Module):
         )
 
 
-    def forward(self, h: torch.Tensor, tokens: torch.Tensor) -> torch.Tensor:
+    def forward(self, h: torch.Tensor, K, V) -> torch.Tensor:
 
-        B, K, D = h.shape
-        N = tokens.shape[2]
+        B, n_q, D = h.shape
+        N = K.shape[1]
 
         residual = h
         h = self.ln_q(h)
-        q = self.wq(h).unsqueeze(2).view(B, K, 1, self.n_head, self.d_head).transpose(2, 3)
-        k = self.wk(tokens).view(B, K, N, self.n_head, self.d_head).transpose(2, 3)
-        v = self.wv(tokens).view(B, K, N, self.n_head, self.d_head).transpose(2, 3)
+        q = self.wq(h).unsqueeze(2).view(B, n_q, 1, self.n_head, self.d_head).transpose(2, 3)
+        k = K.unsqueeze(1).view(B, 1, N, self.n_head, self.d_head).transpose(2, 3)
+        v = V.unsqueeze(1).view(B, 1, N, self.n_head, self.d_head).transpose(2, 3)
 
         attn_out = F.scaled_dot_product_attention(q, k, v)
-        attn_out = attn_out.squeeze(3).view(B, K, D)
+        attn_out = attn_out.squeeze(3).view(B, n_q, D)
         attn_out = self.wo(attn_out)
 
         h = residual + attn_out  # Residual connection
         h = h + self.ffn(self.ln_ff(h))  # FFN with residual
         return h
 
+    
 
-class LocalCrossAttn(nn.Module):
+class GlobalCrossAttn(nn.Module):
 
     def __init__(self, d_model: int = 192, n_head: int = 6, num_layers: int = 2):
         super().__init__()
-        self.ln_kv = nn.LayerNorm(d_model)
         self.layers = nn.ModuleList([
             CrossAttnLayer(d_model, n_head) for _ in range(num_layers)
         ])
 
-    def forward(self, h: torch.Tensor, tokens: torch.Tensor) -> torch.Tensor:
-        tokens = self.ln_kv(tokens)
-        for layer in self.layers:
-            h = layer(h, tokens)
+    def forward(self, h: torch.Tensor, precomputed: dict, lev: int) -> torch.Tensor:
+        for i, layer in enumerate(self.layers):
+            h, _ = layer(h, precomputed[f'K_{i}_l{lev}'], precomputed[f'V_{i}_l{lev}'])
         return h
     
-
-if __name__ == "__main__":
-    tokens = torch.randn(2, 16, 91, 192)  # B=2, K=16, 91 tokens
-    seed = torch.randn(2, 16, 192)         # query seed
-
-    model = LocalCrossAttn()
-    h = model(seed, tokens)
-    print(f"h: {h.shape}")  # expect [2, 16, 192]

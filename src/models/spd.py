@@ -1,14 +1,11 @@
 import torch
 import torch.nn as nn
 
-from models.encoder import ConvNeXtV2Encoder
-from models.pyramid_neck import ProjectionNeck
-from models.precompute import PreCompute
-from models.query_encoder import TokenConstructor
-from models.local_cross_attn import LocalCrossAttn
-from models.global_cross_attn import GlobalCrossAttn
-from models.deformable_read import DeformableRead
-from models.fused_decoder import FusedDecoder
+from models.encoder.convnext import ConvNeXtV2Encoder
+from models.encoder.pyramid_neck import ProjectionNeck
+from models.encoder.precompute import PreCompute
+from models.decoder.query_seed import SeedConstructor
+from models.decoder.global_cross_attn import GlobalCrossAttn
 
 class SPD(nn.Module):
 
@@ -17,26 +14,23 @@ class SPD(nn.Module):
         self.encoder = ConvNeXtV2Encoder(pretrained=pretrained)
         self.neck = ProjectionNeck()
         self.precompute = PreCompute()
-        self.b1 = TokenConstructor()
-        self.b2 = LocalCrossAttn()
+        self.b1 = SeedConstructor()
         self.b3 = GlobalCrossAttn()
-        self.b4 = DeformableRead()
-        self.b5 = FusedDecoder()
 
-    def forward(self, images: torch.Tensor, query_coords: torch.Tensor) -> torch.Tensor:
+
+    def forward(self, images: torch.Tensor, query_coords: torch.Tensor,
+                return_debug: bool = False) -> torch.Tensor:
+
         features = self.encoder(images)
         features = self.neck(features)
         features = self.precompute(features)
 
-        query_tokens, seed = self.b1(features, query_coords)
-        h = self.b2(seed, query_tokens)
-        h, top_indices = self.b3(h, features)
+        seed, pos, center_grid = self.b1(features, query_coords)
+        
+        h = self.b3(seed, features)
 
-        deform_tokens = self.b4(h, top_indices, query_coords, features)
-        fused_tokens = torch.cat([query_tokens, deform_tokens], dim=2)
-
-        log_depth = self.b5(h, fused_tokens)  # [B, K]
         depth = torch.exp(log_depth)           # metric depth
+
         return depth
 
 if __name__ == "__main__":

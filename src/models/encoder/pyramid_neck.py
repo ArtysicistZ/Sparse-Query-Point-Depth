@@ -2,11 +2,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from models.encoder.convnext import ConvNeXtV2Encoder
+
 class ProjectionNeck(nn.Module):
 
     def __init__(self, 
                  enc_channels: list[int] = [96, 192, 384, 768], 
-                 dec_channels: list[int] = [64, 128, 192, 384]):
+                 dec_channels: list[int] = [192, 192, 192, 192]):
+        
         super().__init__()
         self.projections = nn.ModuleList([
             nn.Conv2d(in_ch, out_ch, kernel_size=1) 
@@ -15,7 +18,8 @@ class ProjectionNeck(nn.Module):
         self.norms = nn.ModuleList([
             nn.LayerNorm(out_ch) for out_ch in dec_channels
         ])
-        self.l4_self_attn = L4SelfAttention(d_model=dec_channels[3], num_layers=2)
+        self.l4_self_attn = SelfAttention(d_model=dec_channels[3], num_layers=2)
+
 
     def _proj(self, x: torch.Tensor, conv, ln) -> torch.Tensor:
         B, C, H, W = x.shape
@@ -24,6 +28,7 @@ class ProjectionNeck(nn.Module):
         x = ln(x)
         x = x.permute(0, 3, 1, 2)  # [B, out_ch, H, W]
         return x
+    
     
     def forward(self, features: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         keys = list(features.keys())
@@ -37,7 +42,7 @@ class ProjectionNeck(nn.Module):
 class SelfAttentionLayer(nn.Module):
     """One layer of self-attention for the L4 feature map."""
 
-    def __init__(self, d_model: int = 384, n_head: int = 6, ffn_ratio: int = 4):
+    def __init__(self, d_model: int = 192, n_head: int = 6, ffn_ratio: int = 4):
         super().__init__()
         self.n_head = n_head
         self.d_head = d_model // n_head
@@ -82,16 +87,16 @@ class SelfAttentionLayer(nn.Module):
         return x
     
 
-class L4SelfAttention(nn.Module):
+class SelfAttention(nn.Module):
 
-    def __init__(self, d_model: int = 384, num_layers: int = 2):
+    def __init__(self, d_model: int = 192, num_layers: int = 2):
         super().__init__()
         self.layers = nn.ModuleList([
             SelfAttentionLayer(d_model) for _ in range(num_layers)
         ])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """x: [B, 384, H, W] → [B, 384, H, W]"""
+        """x: [B, 192, H, W] → [B, 192, H, W]"""
         B, C, H, W = x.shape
         x = x.reshape(B, C, -1).transpose(1, 2)
 
@@ -99,10 +104,11 @@ class L4SelfAttention(nn.Module):
             x = layer(x)
         x = x.transpose(1, 2).reshape(B, C, H, W) 
         return x
+    
 
     
 if __name__ == "__main__":
-    from models.encoder import ConvNeXtV2Encoder
+    from models.encoder.convnext import ConvNeXtV2Encoder
     
     encoder = ConvNeXtV2Encoder(pretrained=True)
     neck = ProjectionNeck()
