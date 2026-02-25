@@ -5,7 +5,9 @@ from models.encoder.convnext import ConvNeXtV2Encoder
 from models.encoder.pyramid_neck import ProjectionNeck
 from models.encoder.precompute import PreCompute
 from models.decoder.query_seed import SeedConstructor
+from models.decoder.msda_decoder import MSDADecoder
 from models.decoder.global_cross_attn import GlobalCrossAttn
+from models.decoder.depth_head import DepthHead
 
 class SPD(nn.Module):
 
@@ -14,8 +16,10 @@ class SPD(nn.Module):
         self.encoder = ConvNeXtV2Encoder(pretrained=pretrained)
         self.neck = ProjectionNeck()
         self.precompute = PreCompute()
-        self.b1 = SeedConstructor()
-        self.b3 = GlobalCrossAttn()
+        self.seed_constructor = SeedConstructor()
+        self.msda_decoder = MSDADecoder()
+        self.global_cross_attn = GlobalCrossAttn()
+        self.depth_head = DepthHead()
 
 
     def forward(self, images: torch.Tensor, query_coords: torch.Tensor,
@@ -25,13 +29,21 @@ class SPD(nn.Module):
         features = self.neck(features)
         features = self.precompute(features)
 
-        seed, pos_q, center_grid = self.b1(features, query_coords)
-        
-        h = self.b3(seed, features)
+        canvas_L2 = features['L2'].clone()  # [B, d_model, H_l2, W_l2]
+        canvas_L3 = features['L3'].clone()  # [B, d_model, H_l3, W_l3]
+
+        h, pos_q, center_grid = self.seed_constructor(features, query_coords)
+
+        h, canvas_L2, canvas_L3 = self.msda_decoder(h, pos_q, features, canvas_L2, canvas_L3, center_grid, query_coords)
+
+        h, canvas_L2, canvas_L3 = self.global_cross_attn(h, canvas_L2, canvas_L3, features, lev=4, center_grid=center_grid, coords=query_coords)
+
+        log_depth = self.depth_head(h, canvas_L2, canvas_L3, center_grid)
 
         depth = torch.exp(log_depth)           # metric depth
 
         return depth
+
 
 if __name__ == "__main__":
     model = SPD(pretrained=False)

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from spatial_canvas import CanvasLayer, CanvasSmooth
+from models.decoder.spatial_canvas import CanvasLayer
 
 class CrossAttnLayer(nn.Module):
 
@@ -25,7 +25,6 @@ class CrossAttnLayer(nn.Module):
         )
 
         self.canvas_layer = CanvasLayer(d_model=d_model)
-        self.canvas_smooth = CanvasSmooth(d_model=d_model)
 
 
     def forward(self, h: torch.Tensor, canvas_L2: torch.Tensor, canvas_L3: torch.Tensor, K, V, center_grid: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
@@ -48,7 +47,7 @@ class CrossAttnLayer(nn.Module):
 
         # canvas
         h, canvas_L2, canvas_L3 = self.canvas_layer(h, canvas_L2, canvas_L3, center_grid, coords)
-        canvas_L2, canvas_L3 = self.canvas_smooth(canvas_L2, canvas_L3)
+
         return h, canvas_L2, canvas_L3
 
     

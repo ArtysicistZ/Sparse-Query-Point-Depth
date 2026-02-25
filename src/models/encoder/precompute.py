@@ -16,11 +16,6 @@ class PreCompute(nn.Module):
         self.wv_l4 = nn.ModuleList([
             nn.Linear(l4_channels, d_model) for _ in range(n_layers)
         ])
-
-        '''
-        self.calib_l4 = nn.Linear(l4_channels, 1)
-        self.calib_bias = nn.Linear(l4_channels, 1)
-        '''
         
 
     def forward(self, features: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:

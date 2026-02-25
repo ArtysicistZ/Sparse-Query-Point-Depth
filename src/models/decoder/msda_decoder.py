@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from spatial_canvas import CanvasSmooth, CanvasLayer
+from models.decoder.spatial_canvas import CanvasLayer
 
 class MSDADecoder(nn.Module):
     
@@ -16,7 +16,7 @@ class MSDADecoder(nn.Module):
     def forward(self, h: torch.Tensor, pos_q: torch.Tensor, features: dict[str, torch.Tensor], canvas_L2: torch.Tensor, canvas_L3: torch.Tensor, center_grid: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
         for layer in self.layers:
             h, canvas_L2, canvas_L3 = layer(h, pos_q, features, canvas_L2, canvas_L3, center_grid, coords)
-        return h
+        return h, canvas_L2, canvas_L3  # [B, K, d_model], [B, d_model, H_l2, W_l2], [B, d_model, H_l3, W_l3]
 
 
 
@@ -27,13 +27,11 @@ class MSDADecoderLayer(nn.Module):
         self.msda = MSDABlock(d_model=d_model)
         self.q2q = Q2QBlock(d_model=d_model)
         self.canvas_layer = CanvasLayer(d_model=d_model)
-        self.canvas_smooth = CanvasSmooth(d_model=d_model)
 
     def forward(self, h: torch.Tensor, pos_q: torch.Tensor, features: dict[str, torch.Tensor], canvas_L2: torch.Tensor, canvas_L3: torch.Tensor, center_grid: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
         h = self.msda(h, features, center_grid)
-        h, canvas_L2, canvas_L3 = self.canvas_layer(h, canvas_L2, canvas_L3, center_grid, coords)
-        canvas_L2, canvas_L3 = self.canvas_smooth(canvas_L2, canvas_L3)
         h = self.q2q(h, pos_q)
+        h, canvas_L2, canvas_L3 = self.canvas_layer(h, canvas_L2, canvas_L3, center_grid, coords)
         return h, canvas_L2, canvas_L3
 
 
@@ -73,7 +71,7 @@ class MSDABlock(nn.Module):
             feat = features[f'L{level+1}']  # [B, C, H_l, W_l]
 
             # Compute sampling locations
-            sampling_pos = center_grid.squeeze(2) + offsets[:, :, :, level]  # [B, K, 6, 4, 2]
+            sampling_pos = center_grid.unsqueeze(2) + offsets[:, :, :, level, :, :].view(B, K, self.n_head, self.n_points, 2)  # [B, K, 6, 4, 2]
             sampling_pos = sampling_pos.view(B, K * self.n_head * self.n_points, 2).unsqueeze(2)  # [B, K*n_head*n_points, 1, 2]
 
             # Sample features using grid_sample
