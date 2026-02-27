@@ -256,3 +256,20 @@ All experiments show: fast initial learning (epoch 1-2), then regression or plat
 | 1     | ~0.42     | 0.2535 | 0.3348 | 43.8% | [0.69, 5.53] | [0.71, 9.95] | 1.239 | Head barely learning (std=0.28). 0-2m: 0.206, 2-5m: 0.251, 5-10m: 0.506. Scale gap 4.9% |
 | 2     |           | **0.2178** | 0.2876 | **56.6%** | [0.72, 6.42] | [0.71, 9.96] | 1.117 | Head OK (std=0.33). 0-2m: 0.238, 2-5m: 0.187, 5-10m: 0.402. **Scale nearly solved** (s*=1.12). Scaled AbsRel WORSE (-2.1%) — structure is the issue now, not scale |
 | 3     |           | 0.2240 | 0.2959 | 53.3% | [0.71, 7.11] | [0.71, 9.96] | 1.152 | **Slight regression.** Pred max expanded (6.42→7.11) but AbsRel worsened. 0-2m: 0.218, 2-5m: 0.207, 5-10m: 0.411. Scale regressed (1.12→1.15) |
+
+---
+
+## Exp 10: v14 final — dual canvas, full NYU, large batch
+- **Architecture:** v14 final (dual canvas L2 DWConv5×5 + L3 DWConv3×3, no triple canvas)
+- **Loss:** L_silog(λ=0.15) + 0.5 × (L_dense_silog(aux_L2) + L_dense_silog(aux_L3))
+- **Batch:** ~92 (inferred: 517 steps/epoch × 92 ≈ 47584 = full NYU train set), K=256
+- **Optimizer:** AdamW, encoder 1e-5 / decoder 1e-4, weight_decay=0.01
+- **Scheduler:** CosineAnnealingLR, T_max=10, eta_min=1e-6
+- **AMP:** bfloat16
+
+| Epoch | Train Loss | AbsRel | SILog | d<1.25 | Pred Range | GT Range | s* | Notes |
+|-------|-----------|--------|-------|--------|------------|----------|----|-------|
+| 1     | ~0.21     | 0.2551 | 0.3371 | 43.9% | [0.691, 5.281] | [0.714, 9.955] | 1.237 | Head barely learning (std=0.28). 0-2m: 0.209, 2-5m: 0.254, 5-10m: 0.497. Scale gap 4.2% |
+| 2     | ~0.17     | 0.2591 | 0.3371 | 41.5% | [0.679, 5.578] | [0.713, 9.970] | 1.269 | **Regression.** Head OK (std=0.30). 0-2m: 0.202, 2-5m: 0.264, 5-10m: 0.493. Scale gap worsened to 9.1% (scaled AbsRel 0.2357). SILog unchanged from ep1 (0.3371) |
+
+**Conclusion:** Epoch 1→2 regression despite head std improving (barely→OK). SILog metric flat across both epochs (0.3371) while AbsRel worsened — suggests scale shift rather than structural degradation. s* worsened (1.237→1.269): model is learning wrong scale direction. Pred max slightly expanded (5.28→5.58) but all-range accuracy dropped. Pattern consistent with prior v13.1 experiments: fast first-epoch gains, then regression. Large batch size may be reducing gradient noise too aggressively, hurting generalization.
