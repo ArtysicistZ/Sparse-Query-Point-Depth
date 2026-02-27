@@ -1,4 +1,4 @@
-# SPD v13 Experimental Results
+# SPD Experimental Results
 
 ## Setup
 - **Dataset:** NYU Depth V2 (50K train, 654 val)
@@ -197,3 +197,62 @@ All experiments show: fast initial learning (epoch 1-2), then regression or plat
 | v13.1: SILog(λ=0.5), no aug | ~3.9M | 0.230 (ep3) | Overfits after ep3, max pred ~6.2m |
 | v13.1: SILog(λ=0.5), per-img+aug | ~3.9M | 0.254 (ep3) | No overfit but 5× slower learning |
 | **v13.1: SILog(λ=0.15), per-img+aug** | ~3.9M | **0.239 (ep2)** | Scale fixed, routing collapse + pred ceiling persist |
+
+---
+
+# v14 Experiments
+
+## v14 Architecture Summary
+- **Encoder:** ConvNeXt V2-T (FCMAE pre-trained), fine-tuned 0.1× LR, ~28.6M
+- **Neck:** Conv(k1)+LN per level → uniform d=192, + 2× L4 Self-Attention (~1.2M)
+- **Decoder:** Multi-scale seed → 3×MSDA (deformable cross-attn) → 2×B3b (L4 cross-attn) → depth head
+- **Dual Spatial Canvas:** L2 (stride 8, DWConv5×5) + L3 (stride 16, DWConv3×3), write-smooth-read at every layer (~809K)
+- **All 5 decoder layers:** cross-attn → dual canvas write-smooth-read → Q2Q self-attn → FFN
+- **Depth head:** MLP(192→384→1), depth = exp(log_depth), learnable scale exp(s)
+- **Total params:** ~33.6M (encoder 28.6M + neck/SA 1.2M + precompute 0.1M + decoder 3.7M)
+
+### Key changes from v13.1
+- Uniform d=192 neck (was [64,128,192,384])
+- Multi-scale seed from all 4 levels (was single-level B1)
+- Dual Spatial Canvas replaces no-canvas architecture
+- 3×MSDA deformable cross-attn replaces B2+B5
+- B3a removed (redundant with L3 canvas + MSDA)
+- Q2Q self-attn inside every layer (was standalone)
+- Dense auxiliary loss on L2/L3 neck features (new)
+
+---
+
+## Exp 8: v14 full pipeline — SILog + dense aux
+- **Architecture:** v14 (see summary above)
+- **Loss:** L_silog(λ=0.15) + 0.5 × (L_dense_silog(aux_L2) + L_dense_silog(aux_L3))
+- **Batch:** 8, K=256
+- **Optimizer:** AdamW, encoder 1e-5 / decoder 1e-4, weight_decay=0.01
+- **Scheduler:** CosineAnnealingLR, T_max=10, eta_min=1e-6
+- **AMP:** bfloat16
+
+| Epoch | Train Loss | AbsRel | SILog | d<1.25 | Pred Range | GT Range | s* | Notes |
+|-------|-----------|--------|-------|--------|------------|----------|----|-------|
+| 1     | ~0.45     | 0.2743 | 0.3533 | 36.9% | [0.58, 4.81] | [0.71, 9.97] | 1.314 | Head barely learning (std=0.28), 5-10m: 0.526 |
+| 2     | ~0.39     | 0.2601 | 0.3372 | 40.6% | [0.66, 5.00] | [0.71, 9.98] | 1.282 | Improving, no regression. 0-2m: 0.190, 2-5m: 0.271, 5-10m: 0.510 |
+| 3     | ~0.35     | **0.2403** | 0.3171 | **47.1%** | [0.73, 6.03] | [0.71, 9.97] | 1.219 | Head OK (std=0.30). 0-2m: 0.194, 2-5m: 0.240, 5-10m: 0.474. Scale gap 5.8% |
+| 4     | ~0.33     | 0.2409 | 0.3148 | 46.3% | [0.68, 5.89] | [0.71, 9.97] | 1.230 | **Plateau.** All metrics flat. Pred max shrank (6.03→5.89). Scale gap 7.3% |
+| 5     | ~0.31     | 0.2651 | 0.3353 | 38.0% | [0.69, 5.67] | [0.71, 9.96] | 1.312 | **Overfit.** Scale regressed (s* 1.23→1.31). d<1.25 dropped 8pp. Scale gap 16.8% |
+
+**Conclusion:** Plateau at epoch 3-4, overfit by epoch 5. Weak augmentation + low resolution + λ=0.15 insufficient for continued learning.
+
+---
+
+## Exp 9: v14.1 — 416×544, BTS augmentation, triple canvas, λ=0.50
+- **Architecture:** v14 + triple canvas L2(DWConv5×5) + L3(DWConv5×5) + L4(DWConv3×3)
+- **Resolution:** 416×544 (random crop from 480×640, BTS standard)
+- **Augmentation:** BTS-style (rotation ±2.5°, gamma 0.9-1.1, brightness 0.75-1.25, per-channel color 0.9-1.1, hflip)
+- **Loss:** L_silog(λ=0.50) + 0.5 × (L_dense_silog(aux_L2) + L_dense_silog(aux_L3)) — neck aux
+- **Batch:** 4, K=256
+- **Optimizer:** AdamW, encoder 1e-5 / decoder 1e-4, weight_decay=0.01
+- **Scheduler:** CosineAnnealingLR, T_max=10, eta_min=1e-6
+
+| Epoch | Train Loss | AbsRel | SILog | d<1.25 | Pred Range | GT Range | s* | Notes |
+|-------|-----------|--------|-------|--------|------------|----------|----|-------|
+| 1     | ~0.42     | 0.2535 | 0.3348 | 43.8% | [0.69, 5.53] | [0.71, 9.95] | 1.239 | Head barely learning (std=0.28). 0-2m: 0.206, 2-5m: 0.251, 5-10m: 0.506. Scale gap 4.9% |
+| 2     |           | **0.2178** | 0.2876 | **56.6%** | [0.72, 6.42] | [0.71, 9.96] | 1.117 | Head OK (std=0.33). 0-2m: 0.238, 2-5m: 0.187, 5-10m: 0.402. **Scale nearly solved** (s*=1.12). Scaled AbsRel WORSE (-2.1%) — structure is the issue now, not scale |
+| 3     |           | 0.2240 | 0.2959 | 53.3% | [0.71, 7.11] | [0.71, 9.96] | 1.152 | **Slight regression.** Pred max expanded (6.42→7.11) but AbsRel worsened. 0-2m: 0.218, 2-5m: 0.207, 5-10m: 0.411. Scale regressed (1.12→1.15) |

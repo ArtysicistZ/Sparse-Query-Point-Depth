@@ -32,7 +32,7 @@ def train():
     scaler = torch.amp.GradScaler()
 
     dataset = NYUDataset(split="train", K=256)
-    train_loader = DataLoader(dataset, batch_size=8, shuffle=True, num_workers=4, pin_memory=True)
+    train_loader = DataLoader(dataset, batch_size=6, shuffle=True, num_workers=4, pin_memory=True)
 
     for epoch in range(EPOCHS):
         model.train()
@@ -45,13 +45,12 @@ def train():
             optimizer.zero_grad()
 
             with torch.amp.autocast('cuda', dtype=torch.bfloat16):
-                pred_depth, aux_l2, aux_l3 = model(images, coords)
+                pred_depth, aux_l2 = model(images, coords)
 
-                gt_l2 = F.interpolate(depth_map, scale_factor=0.125, mode='bilinear', align_corners=True)
-                gt_l3 = F.interpolate(depth_map, scale_factor=0.0625, mode='bilinear', align_corners=True)
+                gt_l2 = F.interpolate(depth_map, scale_factor=0.25, mode='bilinear', align_corners=True)
 
                 loss_main = l_silog(pred_depth, gt_depth)
-                loss_aux_l2 = l_dense_silog(aux_l2, gt_l2) + l_dense_silog(aux_l3, gt_l3)
+                loss_aux_l2 = l_dense_silog(aux_l2, gt_l2)
                 loss = loss_main + 0.5 * loss_aux_l2
 
             scaler.scale(loss).backward()

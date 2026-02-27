@@ -21,7 +21,7 @@ class CrossAttnLayer(nn.Module):
         self.q2q = Q2QBlock(d_model=d_model)
 
 
-    def forward(self, h: torch.Tensor, pos_q: torch.Tensor, canvas_L2: torch.Tensor, canvas_L3: torch.Tensor, K, V, center_grid: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
+    def forward(self, h: torch.Tensor, pos_q: torch.Tensor, canvas: dict[str, torch.Tensor], K, V, center_grid: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
 
         B, n_q, D = h.shape
         N = K.shape[1]
@@ -42,11 +42,11 @@ class CrossAttnLayer(nn.Module):
         h = residual + attn_out  # Residual connection
 
         # canvas + q2q
-        h, canvas_L2, canvas_L3 = self.canvas_layer(h, canvas_L2, canvas_L3, center_grid, coords)
+        h, canvas = self.canvas_layer(h, canvas, center_grid, coords)
 
         h = self.q2q(h, pos_q)
 
-        return h, canvas_L2, canvas_L3
+        return h, canvas
 
     
 
@@ -58,8 +58,8 @@ class GlobalCrossAttn(nn.Module):
             CrossAttnLayer(d_model, n_head) for _ in range(num_layers)
         ])
 
-    def forward(self, h: torch.Tensor, pos_q: torch.Tensor, canvas_L2: torch.Tensor, canvas_L3: torch.Tensor, precomputed: dict, lev: int, center_grid: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
+    def forward(self, h: torch.Tensor, pos_q: torch.Tensor, canvas: dict[str, torch.Tensor], precomputed: dict, lev: int, center_grid: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
 
         for i, layer in enumerate(self.layers):
-            h, canvas_L2, canvas_L3 = layer(h, pos_q, canvas_L2, canvas_L3, precomputed[f'K_{i}_l{lev}'], precomputed[f'V_{i}_l{lev}'], center_grid, coords)
-        return h, canvas_L2, canvas_L3
+            h, canvas = layer(h, pos_q, canvas, precomputed[f'K_{i}_l{lev}'], precomputed[f'V_{i}_l{lev}'], center_grid, coords)
+        return h, canvas

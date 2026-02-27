@@ -1,18 +1,23 @@
 import torch
 import random
 import numpy as np
-from PIL import Image, ImageEnhance
+from PIL import Image
 from torch.utils.data import Dataset
 from datasets import load_dataset
 
 from config import H_IMG as H, W_IMG as W
 
-MEAN = [0.485, 0.456, 0.406]
-STD = [0.229, 0.224, 0.225]
+MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+# NYU native resolution
+NYU_H, NYU_W = 480, 640
+MIN_DEPTH, MAX_DEPTH = 1e-3, 10.0
+
 
 class NYUDataset(Dataset):
-    """NYU Depth V2 dataset for monocular depth estimation."""
-    
+    """NYU Depth V2 dataset with BTS-style augmentation."""
+
     def __init__(self, split="train", K=256):
         self.split = split
         self.K = K
@@ -24,33 +29,59 @@ class NYUDataset(Dataset):
         return len(self.nyu_data)
 
     def __getitem__(self, idx):
-        mean = torch.tensor(MEAN).view(3, 1, 1)
-        std = torch.tensor(STD).view(3, 1, 1)
-
         item = self.nyu_data[idx]
-        image = item["image"].resize((W, H))  # PIL resize to (width, height)
-        depth = item["depth_map"].resize((W, H), resample=Image.NEAREST)
-        
-        if self.is_train and random.random() < 0.5:
-            image = image.transpose(Image.FLIP_LEFT_RIGHT)
-            depth = depth.transpose(Image.FLIP_LEFT_RIGHT)
+        image = item["image"]    # PIL 480x640
+        depth = item["depth_map"]  # PIL 480x640
 
         if self.is_train:
-            # Random brightness and contrast
+            # --- Random rotation +/-2.5 degrees ---
             if random.random() < 0.5:
-                image = ImageEnhance.Brightness(image).enhance(random.uniform(0.8, 1.2))
-            if random.random() < 0.5:
-                image = ImageEnhance.Contrast(image).enhance(random.uniform(0.8, 1.2))
-            if random.random() < 0.5:
-                image = ImageEnhance.Color(image).enhance(random.uniform(0.8, 1.2))
+                angle = random.uniform(-2.5, 2.5)
+                image = image.rotate(angle, resample=Image.BILINEAR, fillcolor=0)
+                depth = depth.rotate(angle, resample=Image.NEAREST, fillcolor=0)
 
-        image = np.array(image).astype(np.float32) / 255.0
-        image = torch.from_numpy(image).permute(2, 0, 1)  # [C, H, W]
+            # --- Random crop 416x544 from 480x640 ---
+            top = random.randint(0, NYU_H - H)
+            left = random.randint(0, NYU_W - W)
+            image = image.crop((left, top, left + W, top + H))
+            depth = depth.crop((left, top, left + W, top + H))
+
+            # --- Horizontal flip ---
+            if random.random() < 0.5:
+                image = image.transpose(Image.FLIP_LEFT_RIGHT)
+                depth = depth.transpose(Image.FLIP_LEFT_RIGHT)
+
+            # --- Color augmentation (BTS-style, on float32 numpy) ---
+            image = np.array(image).astype(np.float32) / 255.0
+
+            # Gamma
+            gamma = random.uniform(0.9, 1.1)
+            image = np.power(image, gamma)
+
+            # Brightness
+            brightness = random.uniform(0.75, 1.25)
+            image = image * brightness
+
+            # Per-channel color
+            colors = np.random.uniform(0.9, 1.1, size=3).astype(np.float32)
+            image = image * colors[np.newaxis, np.newaxis, :]
+
+            image = np.clip(image, 0.0, 1.0)
+        else:
+            # --- Validation: resize to target resolution ---
+            image = image.resize((W, H), resample=Image.BILINEAR)
+            depth = depth.resize((W, H), resample=Image.NEAREST)
+            image = np.array(image).astype(np.float32) / 255.0
+
+        # --- Normalize and convert ---
+        image = (image - MEAN[np.newaxis, np.newaxis, :]) / STD[np.newaxis, np.newaxis, :]
+        image = torch.from_numpy(image).permute(2, 0, 1).float()  # [C, H, W]
 
         depth = np.array(depth).astype(np.float32)
-        image = (image - mean) / std
+        depth = np.clip(depth, 0.0, MAX_DEPTH)
 
-        valid_y, valid_x = np.where(depth > 0)
+        # --- Sample query points from valid pixels ---
+        valid_y, valid_x = np.where(depth >= MIN_DEPTH)
         indices = np.random.choice(len(valid_y), self.K, replace=True)
 
         qx = valid_x[indices]
@@ -70,3 +101,8 @@ if __name__ == "__main__":
     print(f"coords: {coords.shape}")
     print(f"gt_depth: {gt_depth.shape}, range [{gt_depth.min():.2f}, {gt_depth.max():.2f}]")
     print(f"depth_map: {depth_map.shape}, range [{depth_map.min():.2f}, {depth_map.max():.2f}]")
+
+    ds_val = NYUDataset(split="validation", K=16)
+    image, coords, gt_depth, depth_map = ds_val[0]
+    print(f"\nVal image: {image.shape}, range [{image.min():.2f}, {image.max():.2f}]")
+    print(f"Val depth_map: {depth_map.shape}, range [{depth_map.min():.2f}, {depth_map.max():.2f}]")

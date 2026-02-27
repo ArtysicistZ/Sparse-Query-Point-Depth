@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from models.encoder.convnext import ConvNeXtV2Encoder
 from models.encoder.pyramid_neck import ProjectionNeck
@@ -21,42 +22,46 @@ class SPD(nn.Module):
         self.global_cross_attn = GlobalCrossAttn()
         self.depth_head = DepthHead()
 
-        self.aux_head_l2 = nn.Conv2d(192, 1, kernel_size=1)
-        self.aux_head_l3 = nn.Conv2d(192, 1, kernel_size=1)
+        self.canvas_head_L2 = nn.Sequential(
+            nn.Conv2d(192, 64, kernel_size=3, padding=1),
+            nn.GELU(),
+            nn.Conv2d(64, 1, kernel_size=1)
+        )
 
 
     def forward(self, images: torch.Tensor, query_coords: torch.Tensor) -> torch.Tensor:
 
         features = self.encoder(images)
         features = self.neck(features)
-        if self.training:
-            aux_l2 = torch.exp(self.aux_head_l2(features['L2']))  # [B, 1, H_l2, W_l2]
-            aux_l3 = torch.exp(self.aux_head_l3(features['L3']))  # [B, 1, H_l3, W_l3]
-
         features = self.precompute(features)
 
-        canvas_L2 = features['L2'].clone()  # [B, d_model, H_l2, W_l2]
-        canvas_L3 = features['L3'].clone()  # [B, d_model, H_l3, W_l3]
+        canvas = {}
+        canvas['L2'] = features['L2'].clone()  # [B, d_model, H_l2, W_l2]
+        canvas['L3'] = features['L3'].clone()  # [B, d_model, H_l3, W_l3]
+        canvas['L4'] = features['L4'].clone()  # [B, d_model, H_l4, W_l4]
 
         h, pos_q, center_grid = self.seed_constructor(features, query_coords)
 
-        h, canvas_L2, canvas_L3 = self.msda_decoder(h, pos_q, features, canvas_L2, canvas_L3, center_grid, query_coords)
+        h, canvas = self.msda_decoder(h, pos_q, features, canvas, center_grid, query_coords)
 
-        h, canvas_L2, canvas_L3 = self.global_cross_attn(h, pos_q, canvas_L2, canvas_L3, features, lev=4, center_grid=center_grid, coords=query_coords)
+        h, canvas = self.global_cross_attn(h, pos_q, canvas, features, lev=4, center_grid=center_grid, coords=query_coords)
 
         log_depth = self.depth_head(h)
 
         depth = torch.exp(log_depth)           # metric depth
 
         if self.training:
-            return depth, aux_l2, aux_l3
+            canvas_l2_up = F.interpolate(canvas['L2'], scale_factor=2, mode='bilinear', align_corners=True)  
+            aux_l2 = torch.exp(self.canvas_head_L2(canvas_l2_up))  
+            return depth, aux_l2
         return depth
 
 
 if __name__ == "__main__":
     model = SPD(pretrained=False)
-    images = torch.randn(1, 3, 256, 320)
+    images = torch.randn(1, 3, 416, 544)
     coords = torch.randint(0, 256, (1, 16, 2)).float()
-    depth = model(images, coords)
+    depth, aux_l2 = model(images, coords)
     print(f"depth: {depth.shape}")  # expect [1, 16]
+    print(f"aux_l2: {aux_l2.shape}")  
     print(f"params: {sum(p.numel() for p in model.parameters()) / 1e6:.1f}M")

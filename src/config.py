@@ -1,4 +1,4 @@
-H_IMG = 256
-W_IMG = 320
+H_IMG = 416
+W_IMG = 544
 
 EPOCHS = 10

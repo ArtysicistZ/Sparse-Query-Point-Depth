@@ -13,11 +13,10 @@ class MSDADecoder(nn.Module):
         ])
 
 
-    def forward(self, h: torch.Tensor, pos_q: torch.Tensor, features: dict[str, torch.Tensor], canvas_L2: torch.Tensor, canvas_L3: torch.Tensor, center_grid: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
+    def forward(self, h: torch.Tensor, pos_q: torch.Tensor, features: dict[str, torch.Tensor], canvas: dict[str, torch.Tensor], center_grid: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
         for layer in self.layers:
-            h, canvas_L2, canvas_L3 = layer(h, pos_q, features, canvas_L2, canvas_L3, center_grid, coords)
-        return h, canvas_L2, canvas_L3  # [B, K, d_model], [B, d_model, H_l2, W_l2], [B, d_model, H_l3, W_l3]
-
+            h, canvas = layer(h, pos_q, features, canvas, center_grid, coords)
+        return h, canvas  
 
 
 class MSDADecoderLayer(nn.Module):
@@ -28,12 +27,12 @@ class MSDADecoderLayer(nn.Module):
         self.canvas_layer = CanvasLayer(d_model=d_model)
         self.q2q = Q2QBlock(d_model=d_model)
 
-    def forward(self, h: torch.Tensor, pos_q: torch.Tensor, features: dict[str, torch.Tensor], canvas_L2: torch.Tensor, canvas_L3: torch.Tensor, center_grid: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
+    def forward(self, h: torch.Tensor, pos_q: torch.Tensor, features: dict[str, torch.Tensor], canvas: dict[str, torch.Tensor], center_grid: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
 
         h = self.msda(h, features, center_grid)
-        h, canvas_L2, canvas_L3 = self.canvas_layer(h, canvas_L2, canvas_L3, center_grid, coords)
+        h, canvas = self.canvas_layer(h, canvas, center_grid, coords)
         h = self.q2q(h, pos_q)
-        return h, canvas_L2, canvas_L3
+        return h, canvas
 
 
 class MSDABlock(nn.Module):
