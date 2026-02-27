@@ -2,14 +2,16 @@
 
 Author: Claude
 Date: 2026-02-26
-Version: v15 (v14 → remove Q2Q + L4 self-attn, native L3/L4 dims, local DPT patch refinement per query)
+Version: v15 (DPT-style FPN global fusion + per-query local L1 patch; removes MSDA / B3b / canvas / Q2Q / neck)
 
-> **v15 motivation** (post-Exp 9/10): v14 plateau analysis reveals three structural issues:
-> 1. **Redundant self-attention.** L4 self-attention (886K) is redundant — ConvNeXt V2 is designed to excel without self-attention (proven on ImageNet without attention), and for depth prediction the queries themselves handle global perception via MSDA and GlobalCrossAttn. Q2Q self-attention (750K across 5 layers) ignores spatial structure — the canvas already mediates inter-query communication spatially, which is the correct inductive bias for depth.
-> 2. **Massive L3/L4 information bottleneck.** Projecting L3 (384ch) → 192 loses 50% of channels; L4 (768ch) → 192 loses 75%. These channels encode FCMAE-pretrained scene understanding. A shared global projection destroys the channel diversity before any query can selectively read from it. Per-head projections from native dimensions allow different attention heads to extract different aspects.
-> 3. **No sub-stride-8 local precision.** Canvas L2 (stride 8) and MSDA cannot encode depth structure smaller than 8px. Queries are at exact pixel positions — they need fine local context. DPT solves this by progressive upsampling at every fusion stage. v15 applies the same principle **locally** per query: a 7×7 L1 patch (covering 28×28 pixels at stride 4) is upsampled DPT-style to stride 1, giving each query genuine sub-8px structural awareness.
+> **v15 core insight:** v14's failure is a local-information problem. Every mechanism in v14's decoder — MSDA, canvas write-smooth-read, B3b — operates at stride ≥ 8. Queries have no sub-stride-8 precision, yet they predict depth at exact pixel positions. The canvas additionally has a structural flaw: queries must scatter-write to a dense map they haven't learned to fill, before reading from it — a backwards causal structure. DPT's insight is different: build the dense feature map bottom-up from encoder features (correct causal direction), then queries sample from it.
 >
-> **Philosophy change:** v14 followed "add attention wherever ambiguous." v15 follows "trust the backbone, remove redundant attention, add targeted fine-grained local processing."
+> **v15 applies this in two complementary parts:**
+> 1. **Global (DPT-style FPN):** Progressive FPN fusion of L4→L3→L2 produces a stride-8 dense feature map at D=64 channels, using full DPT **FeatureFusionBlock** (ResidualConvUnit) blocks — identical to DAv2-S. D=64 matches DAv2-Small (ViT-S scale ≈ ConvNeXt V2-T scale). Fusion MACs scale as D²: D=256 costs 16× more than D=64 — unjustified at our backbone scale.
+> 2. **Local (valid-conv inference / dense-padded training, shared weights):** Same conv layers, two execution modes. **Inference:** per query, sample 9×9 from stride_8_map and 9×9 from L1; apply a cascade of valid Conv3×3 with bilinear-upsample stages; output is a single 1×1 feature vector (local_h[32]) at the query position — minimum samples, no wasted 32×32 computation. **Training:** identical conv layers run with padded convolutions on the full stride_8_map and L1 feature maps (no per-query extraction), producing a dense H×W feature map → dense depth prediction → dense SILog loss (100% pixel coverage). At inference, local_h is sampled from the center of the valid-conv output; at training, local_h is read from the dense feature map at K query positions.
+> 3. **Dense training, no queries:** Training runs purely dense — no K-query sampling, no MLP depth head. Identical to DPT training: padded convs on full feature maps → H×W depth prediction → SILog over all valid pixels. The Conv1×1(32→1) dense head is the **same** layer used at inference (applied to the 1×1 center of each valid-conv output). No separate query-based training path.
+>
+> **Result:** 6 modules removed (neck, L4-SA, seed constructor, canvas, MSDA, B3b). 2 modules added (DPT FPN, local patch path). ~4.1M fewer parameters. Architecturally simpler and better-motivated.
 
 ---
 
@@ -17,105 +19,99 @@ Version: v15 (v14 → remove Q2Q + L4 self-attn, native L3/L4 dims, local DPT pa
 
 **Input:** RGB image $I \in \mathbb{R}^{H \times W \times 3}$ and query pixel coordinates $Q = \{(u_i, v_i)\}_{i=1}^{K}$.
 
-**Output:** Depth $\hat{d}_i$ at each queried pixel.
+**Output:** Metric depth $\hat{d}_i$ at each queried pixel.
 
-**Constraint:** No dense $H \times W$ depth decoding. Shared encoder pass once, then sparse per-query decoding:
+**Constraint:** No dense $H \times W$ decoding. Encoder runs once; decoder is $O(K)$ per query.
 
-$$T_{\text{total}}(K) = T_{\text{encode}}(I) + T_{\text{decode}}(K \mid \text{features})$$
-
-**Baseline:** DAv2-S (ViT-S encoder + DPT dense decoder, ~49G MACs).
-**Ours (v15):** ConvNeXt V2-T encoder + sparse MSDA decoder + local DPT patch refinement per query.
+**Baseline:** DAv2-S (ViT-S + DPT dense decoder, ~49G MACs). v15 targets competitive AbsRel with far fewer decoder MACs at inference.
 
 ---
 
-## 2. Architecture Overview
-
-### 2.1 Key Changes from v14 → v15
+## 2. Key Changes v14 → v15
 
 | Component | v14 | v15 | Rationale |
 |---|---|---|---|
-| L4 self-attention | 2× FullSelfAttn₁₉₂ (886K) | **Removed** | ConvNeXt V2 proven without SA; queries handle global perception |
-| Q2Q self-attention | In all 5 decoder layers (~150K each) | **Removed** | Canvas mediates inter-query context spatially — right inductive bias for depth |
-| L3 dimension | 384 → 192 in neck | **384 (native)** | 2× more information for MSDA sampling and seed |
-| L4 dimension | 768 → 192 in neck + SA | **768 (native)** | 4× more information; per-head projections inside attention |
-| MSDA V maps | Identity (all 192) | **Per-head proj for L3/L4** | Each head extracts different aspects from 384/768-dim features |
-| Decoder sublayers | cross-attn → canvas → Q2Q → FFN (4) | **cross-attn → canvas → FFN (3)** | Q2Q removed; canvas already handles inter-query spatial communication |
-| Depth head | MLP(192→384→1) × exp(s) | **MLP([h; local_feat]→384→1) × exp(s)** | Local fine-grained L1 patch feature fused with global h |
-| Local refinement | None | **LDRM: 7×7 L1 patch → ×4 upsample → stride-1 feature per query** | Sub-8px structural awareness; DPT-style local→global→local |
-| Dense training | Canvas L2 aux head (55K) | **LDRM 28×28 patch dense SILog (training only)** | 128K+ supervised positions per image vs 14K; per-query local patch |
+| Projection neck | Conv1×1+LN per level → 192 (~278K) | **Removed** | DPT fusion handles projections internally |
+| L4 self-attention | 2× FullSelfAttn₁₉₂ (~886K) | **Removed** | ConvNeXt V2 proven without SA; no global reasoning needed before queries sample |
+| Multi-scale seed (B1) | 4-level center concat → h (~160K) | **Removed** | Replaced by direct grid_sample from stride-8 map |
+| Triple Spatial Canvas | Write-smooth-read, 3 scales (~816K) | **Removed** | DPT builds dense map bottom-up (correct causal structure) |
+| MSDA 3L cross-attn | Deformable sampling from L1–L4 (~2,055K) | **Removed** | DPT fusion aggregates multi-scale globally; local patch handles fine detail |
+| B3b 2L GlobalCrossAttn | Full attn to all 221 L4 tokens (~1,334K) | **Removed** | L4 is already in DPT fusion |
+| Q2Q self-attn | All 5 decoder layers (~750K) | **Removed** | Wrong inductive bias for depth; no K² cost to worry about in v15 |
+| **DPT-style FPN fusion** | — | **NEW: L4→L3→L2 → stride-8 map @ D=64 (~317K), full FeatureFusionBlock (RCU)** | D=64 = DAv2-S scale; full RCU = proper DPT blocks; D² scaling makes D=256 prohibitive |
+| **Local patch path** | — | **NEW: 9×9 s8 → 2× valid Conv3×3 → upsample → merge with 9×9 L1 → 4× valid Conv3×3 + 2 upsample stages → 1×1 local_h[32] (~246K)** | Valid-conv inference: minimum 9×9 samples, no 32×32 map. Padded-conv training: full H×W dense. Same weights. |
+| Depth head | MLP(192→384→1) (~74K) | **Conv1×1(32→1) (~0K)** — same as dense training head; no MLP, no global_h | Same weights used in training (dense) and inference (per-query center) |
+| Dense training | Canvas L2 aux head (stride 4, 6.25%) | **Full-image padded convs (same local path weights) → dense H×W prediction → dense SILog** | 100% pixel coverage; no grid patches; Conv1×1(32→1) training-only dense head (~0K) |
+| **Total inference params** | **~34,351K** | **~29,001K** | **−5,350K** |
 
-### 2.2 Architecture Diagram
+---
+
+## 3. Architecture Overview
 
 ```
-RGB Image [H × W × 3]  (416 × 544 at training)
+RGB Image [H × W × 3]   (416 × 544 at training)
   │
   ▼
-ConvNeXt V2-T (FCMAE pre-trained, fine-tuned with 0.1× LR)
-  Stage 1: H/4  × W/4  × 96     (3× ConvNeXt V2 block, DW-Conv k7 + GRN)
-  Stage 2: H/8  × W/8  × 192    (3× ConvNeXt V2 block)
-  Stage 3: H/16 × W/16 × 384    (9× ConvNeXt V2 block)
-  Stage 4: H/32 × W/32 × 768    (3× ConvNeXt V2 block)
+ConvNeXt V2-T  (FCMAE pre-trained, fine-tuned 0.1× LR)
+  L1: [H/4  × W/4  ×  96]   stride 4   ← used ONLY in local patch path
+  L2: [H/8  × W/8  × 192]   stride 8
+  L3: [H/16 × W/16 × 384]   stride 16
+  L4: [H/32 × W/32 × 768]   stride 32
+  │
+  ▼ ─────────────────────────────────────────────────────────────
+  GLOBAL PATH (dense, once per image)
   │
   ▼
-Projection Neck (v15: partial projection)
-  L1: Conv(96→192, k1) + LN     → [H/4  × W/4  × 192]   (for canvas, seed, MSDA identity V)
-  L2: Conv(192→192, k1) + LN    → [H/8  × W/8  × 192]   (for canvas, seed, MSDA identity V)
-  L3: NO global projection       → [H/16 × W/16 × 384]   (native; per-head proj inside MSDA)
-  L4: NO global projection       → [H/32 × W/32 × 768]   (native; per-head proj inside MSDA/B3b)
+DPT-Style FPN Fusion  (2× FeatureFusionBlock/RCU, D=64 — identical to DAv2-S)
+  f4 = LN(Conv1×1(768→64)(L4))   [B, 64, H/32, W/32]
+  f3 = LN(Conv1×1(384→64)(L3))   [B, 64, H/16, W/16]
+  f2 = LN(Conv1×1(192→64)(L2))   [B, 64, H/8,  W/8 ]
   │
-  ▼  (No L4 self-attention in v15)
+  refinenet4: RCU2(f4) → ×2 → Conv1×1                    [B, 64, H/16, W/16]
+  refinenet3: RCU1(f3) + add + RCU2 → ×2 → Conv1×1 = stride_8_map [B, 64, H/8, W/8]
   │
-Pre-compute (once per image)
-  proj_L3:    Linear(384→192) applied to L3 → [H/16 × W/16 × 192]  (for canvas + seed)
-  proj_L4:    Linear(768→192) applied to L4 → [H/32 × W/32 × 192]  (for canvas + seed)
-  B3b L4 KV:  per-head Linear(768→d_head) for K, V on all N_L4 tokens
+  ▼ ─────────────────────────────────────────────────────────────
+  LOCAL PATH  (training: dense O(H×W);  inference: per-query O(K))
   │
-  ▼
-Triple Spatial Canvas (v14: L2+L3+L4, Section 6.5):
-  F_L2⁰ = L2         [H/8  × W/8  × 192]   stride 8
-  F_L3⁰ = proj_L3    [H/16 × W/16 × 192]   stride 16
-  F_L4⁰ = proj_L4    [H/32 × W/32 × 192]   stride 32
+  TRAINING — padded Conv3×3 on full feature maps (identical to DPT):
+  │  stride_8_map [B,64,H/8,W/8] — conv_s8_1,s8_2 (padded) — bilinear ×2
+  │  L1 [B,96,H/4,W/4] — proj_l1 — add — conv_m1,m2 (padded) — bilinear ×2
+  │  — conv_u1,u2 (padded) — bilinear ×2 — conv_f (padded) → [B,32,H,W]
+  │  — dense_head: Conv1×1(32→1) → [B,1,H,W] → dense SILog (all valid pixels)
   │
-Per-query decoder (K queries in parallel):
-  B1: Multi-scale seed from all 4 levels (L1@192, L2@192, proj_L3@192, proj_L4@192) + Fourier PE
-  │
-  3× MSDA DecoderLayer (3 sublayers, no Q2Q):
-  │  ├── MSDA Cross-Attn: L1/L2 (identity V@192), L3 (per-head V proj 384→d_head), L4 (per-head V proj 768→d_head)
-  │  ├── Triple Canvas Write-Smooth-Read (joint-gate cascade L4→L3→L2, then DWConv smooth)
-  │  └── FFN
-  │
-  2× B3b GlobalCrossAttn (3 sublayers, no Q2Q):
-  │  ├── Full Cross-Attn (Q=h, KV from L4@768 via per-head projections, all N_L4 tokens)
-  │  ├── Triple Canvas Write-Smooth-Read
-  │  └── FFN
-  │
-  LDRM: Local DPT Patch Refinement per query [NEW in v15]
-  │  ├── Extract 7×7 patch from L1@192 (stride 4, covers 28×28 px per query)
-  │  ├── Bilinear ×2 → [7×7→14×14, d: 192→96] + Conv(192→96, k3) + GELU + residual
-  │  ├── Bilinear ×2 → [14×14→28×28, d: 96→32] + Conv(96→32, k3) + GELU
-  │  └── Sample at exact query sub-pixel offset → local_feat [K, 32]
-  │
-  Depth Head (v15):
-    h_combined = concat(h_final [K,192], local_feat [K,32])  → [K, 224]
-    depth = exp(MLP(224→384→1) × exp(s))
+  INFERENCE — valid Conv3×3 on 9×9 patches per query:
+  │  s8 branch: 9×9 from stride_8_map      → [B*K, 64, 9, 9]
+  │    valid Conv3×3 (conv_s8_1)           → [B*K, 64, 7, 7]
+  │    valid Conv3×3 (conv_s8_2)           → [B*K, 64, 5, 5]
+  │    bilinear upsample → 9×9             → [B*K, 64, 9, 9]
+  │  L1 branch: 9×9 from L1               → [B*K, 96, 9, 9]
+  │    Conv1×1(96→64) (proj_l1)            → [B*K, 64, 9, 9]
+  │  Merge (add)                           → [B*K, 64, 9, 9]
+  │    valid Conv3×3 (conv_m1)             → [B*K, 64, 7, 7]
+  │    valid Conv3×3 (conv_m2)             → [B*K, 64, 5, 5]
+  │    bilinear upsample → 7×7             → [B*K, 64, 7, 7]
+  │    valid Conv3×3 (conv_u1)             → [B*K, 64, 5, 5]
+  │    valid Conv3×3 (conv_u2)             → [B*K, 64, 3, 3]
+  │    bilinear upsample → 5×5             → [B*K, 64, 5, 5]
+  │    valid Conv3×3 (conv_f, 64→32)       → [B*K, 32, 3, 3]
+  │    center [1, 1]                       → [B*K, 32]
+  │  depth = exp(dense_head(center))        → [B, K]   (same Conv1×1 weights)
 ```
 
 ---
 
-## 3. Encoder: ConvNeXt V2-T (unchanged from v14)
+## 4. Encoder: ConvNeXt V2-T (unchanged from v14)
 
 | Parameter | Value |
-|-----------|-------|
+|---|---|
 | Architecture | ConvNeXt V2-Tiny |
-| Stages | 4 (depths: [3, 3, 9, 3]) |
-| Channels | [96, 192, 384, 768] |
+| Stages | 4 (depths [3,3,9,3], channels [96,192,384,768]) |
 | Strides | [4, 8, 16, 32] |
-| Input size | 416×544 (BTS augmentation: random crop from 480×640) |
-| Block type | ConvNeXt V2 (DW Conv k7 + GRN + PW Conv) |
+| Input | 416×544 (BTS augmentation: random crop from 480×640) |
+| Pretraining | FCMAE — masked autoencoding, strong dense-task transfer |
 | Params | ~28.6M |
 
-**Stage outputs (416×544 input):**
-
+**Stage outputs at 416×544:**
 ```
 RGB 416×544×3
   → Stem: Conv(3→96, k4, s4)         104×136×96
@@ -128,478 +124,582 @@ RGB 416×544×3
   → Stage 4: 3× ConvNeXt V2 block  →  13×17×768    L4, stride 32
 ```
 
-**Why ConvNeXt V2 does not need added self-attention:**
+**No projection neck in v15.** DPT fusion projects each scale internally. L1 is passed directly (native 96ch) to the local patch path — no neck projection needed.
 
-ConvNeXt V2 was specifically designed and proven to achieve state-of-the-art performance without any self-attention mechanism. The GRN (Global Response Normalization) layer provides channel-wise competition across the spatial dimension — a lightweight global normalization that partially substitutes for attention's channel re-weighting. FCMAE pre-training forces L4 to encode full scene context (masked patches require global reasoning). Stage 3's 9× DW-Conv k7 provides theoretical RF of ~55×55 at stride 16, covering the full image at 416×544.
-
-**For depth prediction specifically:** The queries are the agents of global perception. MSDA and B3b give each query selective access to any part of the feature pyramid. Adding self-attention to L4 before queries touch it computes global context twice — once in ConvNeXt's hierarchical processing, once in the redundant SA. This wastes 886K parameters on a computation the query mechanism already performs.
+**On backbone choice:** UniDepth V1 (CVPR 2024) demonstrates ConvNeXt-L [96,192,384,768] + DPT-style decoder for metric depth — confirming this combination is architecturally sound. The top-performing monocular depth models (Depth Anything V2, challenge winners 2024-2025) use ViT/DINOv2 backbones. ConvNeXt V2 FCMAE pretraining is well-suited for dense tasks; however, a ViT-S backbone ablation (same DPT FPN + local patch head, different backbone) would cleanly measure the backbone contribution. For v15, ConvNeXt V2-T is kept to isolate the decoder architecture change.
 
 ---
 
-## 4. Projection Neck (v15: Partial Projection)
+## 5. Global DPT-Style FPN Fusion
 
-v15 breaks with v14's uniform d=192 neck. The key insight: global projection to 192 is a SHARED bottleneck that discards 50–75% of L3/L4 channel information before any query can selectively read from it. Per-head projections inside attention allow different heads to extract different semantic aspects from the full native-dimension features.
+### 5.1 Design Rationale
 
-### 4.1 Neck Architecture
+DPT (Ranftl et al., ICCV 2021) established the standard for dense feature fusion from hierarchical backbones: project each scale to a uniform dimension D via 1×1 conv, then progressively fuse coarse-to-fine via **FeatureFusionBlock** — each block applies ResidualConvUnit (RCU = 2× Conv3×3 with residual skip), bilinear ×2 upsample, and Conv1×1. This is what DPT calls "Reassembly" (projection) + "Fusion" (RefineNet-based). **v15 uses the full FeatureFusionBlock — identical to DAv2.**
 
-```
-Stage 1 [H/4  × W/4  ×  96] → Conv( 96→192, k1) + LN → L1 [H/4  × W/4  × 192]   stride 4
-Stage 2 [H/8  × W/8  × 192] → Conv(192→192, k1) + LN → L2 [H/8  × W/8  × 192]   stride 8
-Stage 3 [H/16 × W/16 × 384] → NO global projection     → L3 [H/16 × W/16 × 384]   stride 16 (native)
-Stage 4 [H/32 × W/32 × 768] → NO global projection     → L4 [H/32 × W/32 × 768]   stride 32 (native)
-```
+**Why D=64:** Depth Anything V2-Small (ViT-S backbone, ConvNeXt V2-T equivalent scale) uses D=64. DPT projects to D matching backbone scale: ViT-S → 64, ViT-B → 128, ViT-L → 256. Fusion MACs scale as D²: going D=64 → 256 multiplies RCU cost by 16×. At 8GB VRAM, D=64 is the correct choice for our backbone scale (see Section 11.4 for D comparison).
 
-**Why L1 and L2 are still projected to 192:** L1 (96ch) must be upsampled anyway (96 < d=192). L2 is already at 192. Canvas L2 and the seed use 192-dim features. No bottleneck issue at these levels.
+**Why stops at stride 8 (not stride 4 → 1):**
 
-**Why L3 (384) and L4 (768) are NOT globally projected:**
+At 416×544, the position count per level:
 
-| Projection type | What happens | Problem |
-|---|---|---|
-| Global 768→192 (v14) | Single Linear applied to all 221 L4 tokens uniformly | All heads share one 192-dim subspace; the other 576 dimensions are discarded before any query sees them |
-| Per-head 768→32 (v15) | Each of 6 heads applies its own Linear(768→32) during attention sampling | Head 1 might capture depth-from-shading cues, Head 2 captures surface normal cues, etc. — impossible if all heads start from same 192-dim projected space |
+| Level | Resolution | Positions | Relative cost |
+|---|---|---:|---:|
+| L4 (stride 32) | 13×17 | 221 | 1× |
+| L3 (stride 16) | 26×34 | 884 | 4× |
+| L2 (stride 8) | 52×68 | 3,536 | 16× |
+| L1 (stride 4) — **global** | 104×136 | 14,144 | **64×** |
+| Per-query local L1, K=221 | 221×8×8 | 14,144 | ~64× |
 
-The 768-dim ConvNeXt V2 L4 features encode rich, diverse scene semantics from FCMAE pretraining. A global 4× compression before any task-specific selection is architecturally premature.
+Adding L1 globally costs 64× the compute of L4, and covers 14,144 positions — of which only K=221 are query positions. Per-query local patches (K=221, 8×8 each) total exactly 14,144 L1 samples — matching full L1 coverage precisely, but only at query-relevant positions. Stopping the global path at stride 8 and using local-only L1 per query gives **100% of the fine-resolution coverage** with zero wasted computation.
 
-**Neck params (v15):** Conv(96→192) ~19K + Conv(192→192) ~37K = **~56K** (vs ~278K in v14; save 222K from removing L3/L4 projections).
-
-### 4.2 Projection for Canvas and Seed (pre-compute, once per image)
-
-Canvas and seed require d=192-dim features from L3 and L4. These are produced by separate pre-compute projections:
-
-```
-proj_L3: Linear(384→192) applied to L3 → [H/16 × W/16 × 192]  (for canvas F_L3⁰ + seed f_q^(3))
-proj_L4: Linear(768→192) applied to L4 → [H/32 × W/32 × 192]  (for canvas F_L4⁰ + seed f_q^(4))
-```
-
-These are NOT the MSDA value sources — they only serve canvas initialization and seed construction. MSDA reads directly from the native-dimension L3@384 and L4@768 feature maps via per-head projections.
-
-**Pre-compute projection params:** Linear(384→192) ~74K + Linear(768→192) ~148K = **~222K**.
-
-### ~~4.3 L4 Self-Attention~~ (REMOVED in v15)
-
-> **Removed.** See Section 2.1 rationale. The 886K parameters are reallocated to more impactful use: LDRM (Section 6.5) and richer L3/L4 per-head projections.
->
-> **Counterargument addressed:** "Stage 4 has only 3 local conv blocks — insufficient for global relationships." Response: (1) ConvNeXt V2's hierarchical architecture propagates global context through downsampling stages. (2) B3b global cross-attention provides exact global L4 access for every query. The queries receive global L4 coherence through B3b — L4 itself does not need to pre-compute this coherence redundantly.
-
----
-
-## 5. Pre-compute (once per image)
-
-**Input:** Encoder pyramid {L1@192, L2@192, L3@384, L4@768}.
-**Output:** Value maps for MSDA, canvas initialization, seed projections, B3b KV.
-
-### 5.1 MSDA Value Sources
-
-| Level | Native dim | MSDA treatment | Params |
-|-------|:---:|---|---:|
-| L1 | 192 | Identity V map — each head slices its d_head=32 channels | 0 |
-| L2 | 192 | Identity V map — same as v14 | 0 |
-| L3 | 384 | Per-head projection: 6 × Linear(384→32) per MSDA layer | 74K/layer |
-| L4 | 768 | Per-head projection: 6 × Linear(768→32) per MSDA layer | 147K/layer |
-
-Per-head projection in MSDA for L3 and L4: when deformable attention samples 4 reference positions from L3 or L4, each head applies its own independent Linear to the sampled 384 or 768-dim features before aggregation. This is the "lazy projection" approach — only applied to the sampled positions (4 per head per query), not pre-applied to the entire feature map.
-
-**Why per-head lazy projection is preferable to global pre-projection:**
-- Global pre-projection: Linear(768→192) maps ALL 221 L4 tokens, sharing one projection for all heads. Information loss is at all positions before any query selection.
-- Lazy per-head: projection happens AFTER spatial selection (at 4 sampled positions). Each head independently decides which 32 dimensions of the 768-dim feature to use. Head 1 might extract surface-reflectance cues for specular depth disambiguation, Head 6 might extract structural edge cues. Impossible with shared global projection.
-
-### 5.2 Canvas and Seed Projections
-
-```
-proj_L3(L3) → proj_L3_feat [H/16 × W/16 × 192]   (shared: canvas F_L3⁰ + seed f_q^(3))
-proj_L4(L4) → proj_L4_feat [H/32 × W/32 × 192]   (shared: canvas F_L4⁰ + seed f_q^(4))
-```
-
-These are pre-computed once and stored.
-
-### 5.3 B3b KV Projections (full attention over all N_L4 tokens)
-
-B3b does full attention over all N_L4 = 221 tokens (at 416×544). Requires K,V projected from L4@768 to attention dimension. Per-head projections preserve diversity:
-
-```
-Per B3b layer ℓ:
-  K_L4^(ℓ,h) = Linear_K^(ℓ,h)(L4)   [N_L4 × 32]  per head h=1..6
-  V_L4^(ℓ,h) = Linear_V^(ℓ,h)(L4)   [N_L4 × 32]  per head h=1..6
-```
-
-Params per B3b layer: 6 × (Linear(768→32) for K + Linear(768→32) for V) = 6 × 2 × 24,576 ≈ **295K/layer**, 2 layers = **590K** (vs 148K in v14 — cost of keeping L4 at 768).
-
-**Pre-compute total (v15):**
-222K (proj_L3 + proj_L4) + 590K (B3b KV) = **~812K** (vs 148K in v14).
-
----
-
-## 6. Per-Query Decoder (v15)
-
-### 6.0 Symbol Table
-
-| Symbol | Meaning | Shape |
-|--------|---------|-------|
-| $d$ | Core query dimension | 192 |
-| $d_h$ | Per-head dimension ($d / H$) | 32 |
-| $H$ | Attention heads | 6 |
-| $L$ | Feature levels for MSDA | 4 |
-| $N_{\text{pts}}$ | Sampling points per head per level | 4 |
-| $q = (u,v)$ | Query pixel coordinate | — |
-| $h^{(n)}$ | Query representation after layer $n$ | 192 |
-| $\text{local}_q$ | L1 patch feature at query sub-pixel position | 32 |
-| $\hat{d}_q$ | Depth prediction | scalar |
-
-### 6.1 B1: Multi-Scale Query Seed (updated for v15 dims)
-
-Sample from all 4 pyramid levels at query center using their pre-computed d=192 representations:
-
-$$f_q^{(\ell)} = \text{Bilinear}(L_\ell^{192},\; p_q^{(\ell)}) \quad \in \mathbb{R}^{192}$$
-
-where $L_1^{192} = L_1$, $L_2^{192} = L_2$, $L_3^{192} = \text{proj\_L3\_feat}$, $L_4^{192} = \text{proj\_L4\_feat}$.
-
-$$h^{(0)} = \text{LN}\!\left(W_{\text{seed}} \,[f_q^{(1)}; f_q^{(2)}; f_q^{(3)}; f_q^{(4)}; \text{pe}_q]\right) \in \mathbb{R}^d$$
-
-$W_{\text{seed}} \in \mathbb{R}^{d \times (4d+32)} = \mathbb{R}^{192 \times 800}$ — unchanged from v14 (**~154K**). The pre-compute projections (proj_L3, proj_L4) produce d=192 features so the seed projection matrix is the same shape.
-
-**No pos_q for Q2Q** (Q2Q removed). The Fourier PE is still used for the seed only.
-
-### 6.2 MSDA Decoder (3 layers, 3 sublayers per layer)
-
-Each MSDA decoder layer $n = 1, 2, 3$ — **Q2Q removed:**
-
-```
-h ──→ LN ──→ MSDA Cross-Attn (L1/L2 identity V; L3/L4 per-head V projection) ──→ +residual
-  ──→ LN ──→ Triple Canvas Write-Smooth-Read (Section 6.4) ──→ +residual
-  ──→ LN ──→ FFN (192 → 768 → 192, GELU) ──→ +residual ──→ h_out
-```
-
-#### 6.2.1 MSDA with Per-Head L3/L4 V Projections
-
-**Step 1–2:** Reference points and offset prediction unchanged from v14.
-
-**Step 3 — Attention weights:** unchanged from v14 (directly predicted from h, not QK dot-product).
-
-**Step 4 — Sample and aggregate (v15 change):**
-
-For L1, L2 (d=192): unchanged from v14 — slice d_head=32 channel window.
-
-For L3 (native 384):
-$$\text{sample}_{i,\ell=3} = \text{Bilinear}(L_3,\; p_q^{(3)} + \Delta_{i,3,m}) \in \mathbb{R}^{384}$$
-$$v_{i,\ell=3,m} = W_{V,i}^{L3} \cdot \text{sample}_{i,\ell=3,m} \in \mathbb{R}^{d_h=32}, \quad W_{V,i}^{L3} \in \mathbb{R}^{32 \times 384}$$
-
-For L4 (native 768): same pattern, $W_{V,i}^{L4} \in \mathbb{R}^{32 \times 768}$.
-
-**MSDA per-layer params (v15):**
-
-| Component | v14 | v15 | Delta |
-|-----------|----:|----:|------:|
-| $W_\text{off}$, $W_\text{attn}$ | 55K | 55K | 0 |
-| $W_O$ (output) | 37K | 37K | 0 |
-| V proj L3: 6 × Linear(384→32) | 0 | 74K | +74K |
-| V proj L4: 6 × Linear(768→32) | 0 | 147K | +147K |
-| Canvas (write/read/gate/LN) | 148K | 148K | 0 |
-| Q2Q (4 × d²) | 148K | **0** | −148K |
-| FFN (d→4d→d) | 296K | 296K | 0 |
-| LNs | ~1K | ~1K | 0 |
-| **Per layer total** | **~685K** | **~758K** | **+73K** |
-
-3 MSDA layers total: **~2,274K** (vs ~2,055K in v14).
-
-#### 6.2.2 Why Q2Q is Removed
-
-> **Removed.** Q2Q inter-query self-attention ignores the spatial structure of depth. Two queries communicating directly regardless of their 2D image distance is the wrong inductive bias: a query at the ceiling should not directly influence a query at the floor. The correct mechanism is SPATIAL — nearby queries on the same surface influence each other through shared canvas cells and DWConv propagation.
->
-> The canvas already provides exactly this: (1) nearby queries write to nearby cells; (2) DWConv smooth propagates information to adjacent cells; (3) the joint-gate cascade (L4→L3→L2) ensures coarse scale context flows into fine scale. This spatial propagation respects depth scene structure — same-surface queries share canvas cells, cross-boundary queries are separated by distance that DWConv does not bridge in 1–2 layers.
->
-> Q2Q's K×K global attention specifically violates the locality principle for depth. A depth network should reason locally (what's this surface?) and globally (where am I in the room?) — canvas handles local, MSDA+B3b handles global. Direct query-to-query dense attention adds a third mechanism that is neither local nor structured globally.
-
-### 6.3 B3b: Global L4 Cross-Attention (2 layers, 3 sublayers per layer)
-
-Full attention over all N_L4=221 tokens (at 416×544) using per-head L4@768 projections:
-
-```
-h ──→ LN ──→ Full Cross-Attn (Q=h@192, KV from L4@768 per-head projections) ──→ +residual
-  ──→ LN ──→ Triple Canvas Write-Smooth-Read (Section 6.4) ──→ +residual
-  ──→ LN ──→ FFN (192 → 768 → 192, GELU) ──→ +residual ──→ h_out
-```
-
-Uses pre-computed per-head K,V (Section 5.3). Each head attends to L4 through a different 32-dim projection of the 768-dim features — preserving the full information diversity.
-
-**B3b params per layer:** Q-proj ~37K + KV projections (counted in pre-compute) + canvas ~148K + FFN ~296K + LNs ~1K = **~482K/layer**, 2 layers = **~964K** (vs ~1,334K in v14; savings from removing Q2Q and also the per-query Q-proj is unchanged but B3b KV cost is in pre-compute).
-
-### 6.4 Triple Spatial Canvas (inherited and extended from v14)
-
-Three shared dense feature maps at strides 8, 16, 32 (initialized from proj_L3_feat and proj_L4_feat for L3/L4). Architecture unchanged from v14: per-layer write → joint-gate cascade (L4→L3→L2) → DWConv smooth → read.
-
-**Joint-gate cascade (v14 Section 10.5, now baseline in v15):**
+### 5.2 Reassembly (Projection to D=64)
 
 ```python
-# After write, before smooth:
-l4_up = F.interpolate(canvas['L4'], size=canvas['L3'].shape[2:], mode='bilinear')
-gate_43 = torch.sigmoid(gate_L4toL3_fine(canvas['L3']) + gate_L4toL3_coarse(l4_up))
-canvas['L3'] = canvas['L3'] + gate_43 * l4_up
-
-l3_up = F.interpolate(canvas['L3'], size=canvas['L2'].shape[2:], mode='bilinear')
-gate_32 = torch.sigmoid(gate_L3toL2_fine(canvas['L2']) + gate_L3toL2_coarse(l3_up))
-canvas['L2'] = canvas['L2'] + gate_32 * l3_up
+# Input: L2 [B,192,52,68], L3 [B,384,26,34], L4 [B,768,13,17]
+f4 = F.layer_norm(self.proj_L4(L4), [64])  # Conv1×1(768→64) + LN → [B,64,13,17]
+f3 = F.layer_norm(self.proj_L3(L3), [64])  # Conv1×1(384→64) + LN → [B,64,26,34]
+f2 = F.layer_norm(self.proj_L2(L2), [64])  # Conv1×1(192→64) + LN → [B,64,52,68]
 ```
 
-Canvas read: W_read(3d→d) — all three levels concatenated. Gate from query h.
+**Why D=64 (not D=128 or D=192):**
+- DAv2-S (ViT-S, same parameter scale as ConvNeXt V2-T) uses D=64
+- RCU MACs scale as D²×N: D=128 costs 4× more, D=256 costs 16× more — for the same architecture
+- L1 (stride-4) global fusion is skipped in v15; fine detail comes from per-query local patches instead
+- For depth regression (1D output per query), D=64 provides ample global context capacity
 
-**Canvas total params (v15):** ~809K (same as v14, plus joint-gate DWConv4×DWConv_k3 ≈ 7K) = **~816K**.
+### 5.3 Fusion (Full DPT FeatureFusionBlock with RCU)
 
-### 6.5 LDRM: Local DPT Patch Refinement Module [NEW in v15]
-
-This is the central new contribution of v15. After the main 5-layer decoder produces $h^{(\text{final})}$, each query at pixel $(u, v)$ needs sub-stride-8 local structure — which canvas L2 (stride 8) cannot provide. The LDRM gives each query access to L1 (stride 4) features in a 28×28 pixel neighborhood, upsampled DPT-style to stride 1.
-
-This closes the local→global→local loop:
-- **Local (seed):** Each query starts from multi-scale center features (B1)
-- **Global (decoder):** 5 layers of MSDA + B3b give global scene context
-- **Local (LDRM):** Fine-grained structural context at exact pixel level closes the loop
-
-#### 6.5.1 The Problem LDRM Solves
-
-Canvas L2 at stride 8: each cell covers an 8×8 pixel region. A depth edge between two surfaces 3px apart is invisible — both sides of the edge map to the same canvas cell. The query's final representation $h$ is dominated by coarse spatial context (MSDA samples from stride-8 at minimum, canvas writes at stride-8).
-
-For queries exactly at depth boundaries (railing edges, table edges, door frames), the 8px granularity is the primary accuracy bottleneck. DPT solves this for dense prediction by progressive upsampling + Conv3×3 at each stage. LDRM applies the same principle locally per query — at 1/K the cost (we process only the neighborhood of K query points, not the full image).
-
-#### 6.5.2 DPT Parallel
-
-| DPT (dense) | LDRM (per-query local) |
-|---|---|
-| Reassemble to stride 4, apply ResidualConvUnit | L1 already at stride 4 — extract 7×7 local patch |
-| Bilinear ×2 → stride 2, Conv(256→128, k3) + residual | Bilinear ×2 → [B×K, 192, 14, 14], Conv(192→96, k3) + GELU + residual |
-| Bilinear ×2 → stride 1, Conv(128→64, k3) + residual | Bilinear ×2 → [B×K, 96, 28, 28], Conv(96→32, k3) + GELU |
-| Predict at every pixel from stride-1 features | Sample at exact query sub-pixel offset from stride-1 local features |
-| Combine with ViT global tokens | Combine local_feat [K,32] with global h [K,192] |
-
-DPT is global (all pixels). LDRM is local (28×28 per query). LDRM cost: $O(K)$ vs DPT cost $O(H \times W)$ — orders of magnitude cheaper, targeted exactly at the K positions that matter.
-
-#### 6.5.3 Step-by-Step Architecture
-
-**Input:** $h^{(\text{final})} \in \mathbb{R}^{B \times K \times d}$ (after B3b), L1 feature map $[B, 192, H/4, W/4]$, query coords $[B, K, 2]$.
-
-**Step 1: Extract 7×7 patch from L1 (stride 4)**
-
-For query at pixel $(u, v)$, create a 7×7 sampling grid at stride-4 spacing (7 L1 cells, each 4px apart, covering a 28×28 pixel region):
-
-$$\text{grid}_{q}[i, j] = \left(\frac{2(u + (i-3) \cdot 4)}{W-1} - 1,\;\; \frac{2(v + (j-3) \cdot 4)}{H-1} - 1\right), \quad i,j \in \{0,\ldots,6\}$$
-
-Create full grid: $[B, K \times 7, 7, 2]$, call `F.grid_sample(L1, grid)` → $[B, 192, K \times 7, 7]$, reshape → $[B \times K, 192, 7, 7]$.
-
-This is a single `F.grid_sample` call for all K queries simultaneously. Efficient: $K \times 49 = 12{,}544$ bilinear samples at 416×544.
-
-**Step 2: DPT-style progressive upsampling**
-
+Each `FeatureFusionBlock` contains two `ResidualConvUnit` (RCU) blocks. An RCU is:
 ```
-patches [B×K, 192, 7, 7]
-  → bilinear ×2 → [B×K, 192, 14, 14]
-  → Conv2d(192, 96, k=3, p=1) + GELU + residual(Conv2d(192,96,k=1))
-  → feat_14 [B×K, 96, 14, 14]
-
-feat_14 [B×K, 96, 14, 14]
-  → bilinear ×2 → [B×K, 96, 28, 28]
-  → Conv2d(96, 32, k=3, p=1) + GELU
-  → feat_28 [B×K, 32, 28, 28]   ← stride-1 local features in 28×28 pixel window
+RCU(x) = x + conv2(GELU(conv1(GELU(x))))   # conv1, conv2 = Conv3×3(D→D)
 ```
 
-The Conv2d after each bilinear upsample learns to synthesize plausible sub-stride-4 structure from the interpolated features. This is the DPT-style "refine the upsampled estimate with local spatial convolution." The conv cannot create information below stride-4, but it CAN learn: "when the two neighboring L1 cells have depth A and B, the boundary between them is most likely at this sub-cell position" — a learned depth boundary model at fine scale.
+**refinenet4** (processes f4 alone — topmost level, no skip):
+```python
+# RCU2 on f4 (no secondary input at topmost level)
+r4 = f4 + self.rn4_conv2(F.gelu(self.rn4_conv1(F.gelu(f4))))  # RCU2: [B,64,13,17]
+r4 = F.interpolate(r4, size=f3.shape[2:], mode='bilinear', align_corners=True)
+r4 = self.rn4_out(r4)            # Conv1×1(64→64) → [B, 64, 26, 34]
+```
 
-**Step 3 (inference): Sample at exact query sub-pixel position**
+**refinenet3** (fuses r4 primary + f3 secondary → stride_8_map):
+```python
+# RCU1 on secondary input f3, then add primary
+skip3 = f3 + self.rn3_conv2(F.gelu(self.rn3_conv1(F.gelu(f3))))  # RCU1(f3): [B,64,26,34]
+r3 = r4 + skip3                                                    # add
+# RCU2 on fused result
+r3 = r3 + self.rn3_conv4(F.gelu(self.rn3_conv3(F.gelu(r3))))     # RCU2: [B,64,26,34]
+r3 = F.interpolate(r3, size=f2.shape[2:], mode='bilinear', align_corners=True)
+stride_8_map = self.rn3_out(r3)  # Conv1×1(64→64) → [B, 64, 52, 68]
+```
 
-Compute the query's pixel offset within its 28×28 local patch (the patch covers pixels $u \pm 12$, $v \pm 12$ approximately):
+`stride_8_map [B, 64, H/8, W/8]` — multi-scale context from L2+L3+L4 at D=64. The 6× Conv3×3 through refinenet4+refinenet3 give substantial RF (~224px), equivalent to DPT's `path_3`. Queries sample from it globally (Section 6.1) and locally (Section 6.2). At D=64, no `proj_s8` projection needed.
 
-$$\text{offset\_norm} = \left(\frac{2 \cdot ((u \bmod 4) + 12)}{27} - 1,\;\; \frac{2 \cdot ((v \bmod 4) + 12)}{27} - 1\right)$$
-
-`F.grid_sample(feat_28, offset_norm)` → $[B \times K, 32, 1, 1]$ → squeeze → $\text{local\_feat} \in \mathbb{R}^{B \times K \times 32}$.
-
-This gives the query a stride-1 feature at its exact pixel position — genuine sub-8px (and sub-4px) structural awareness. The bilinear interpolation within the 28×28 map provides sub-cell precision.
-
-**LDRM params (inference):**
+### 5.4 DPT Fusion Parameters
 
 | Component | Params |
-|-----------|-------:|
-| Conv(192→96, k3) | 192×96×9 + 96 ≈ **166K** |
-| Conv(96→96, k1) residual branch | 96×96 ≈ **9K** |
-| Conv(96→32, k3) | 96×32×9 + 32 ≈ **28K** |
-| **LDRM total** | **~203K** |
-
-LDRM memory: [B×K, 192, 14, 14] at peak. B=6, K=256: 6×256×192×14×14 × 2 bytes (bfloat16) ≈ 144MB peak. If VRAM is tight: reduce to K=128 → 72MB, or reduce intermediate channels 96→64.
-
-#### 6.5.4 Dense Training from LDRM (training only)
-
-In training, `feat_28 [B×K, 32, 28, 28]` covers a 28×28 pixel neighborhood per query at stride 1. This enables dense depth supervision without any extra architecture:
-
-```
-# Broadcast global context h across spatial dims (training only)
-h_spatial = h_final.reshape(B*K, d, 1, 1).expand(B*K, d, 28, 28)  # [B*K, 192, 28, 28]
-
-# Concat global + local: [B*K, 224, 28, 28]
-combined = torch.cat([h_spatial, feat_28], dim=1)
-
-# Dense depth prediction: training-only Conv1×1
-dense_depth = torch.exp(dense_head(combined))  # [B*K, 1, 28, 28]
-```
-
-`dense_head = Conv2d(224, 1, kernel_size=1)` — 225 params (training-only, discarded at inference).
-
-**GT construction:** For each query at $(u, v)$, extract 28×28 GT depth patch centered at $(u, v)$ from the full-resolution GT depth map.
-
-**Dense supervision coverage:**
-- K=256 queries × 28×28 = 2,007,040 total patch positions (with overlap)
-- Unique coverage (assuming uniform query distribution): approximately 128K independent pixels ≈ **57% of 226,304 image pixels**
-- Even with heavy patch overlap: far exceeds canvas L2 auxiliary head coverage (6.25% at stride 4)
-
-**Why h-broadcast is the right fusion:**
-$h^{(\text{final})}$ encodes global scene context (depth scale, room structure, object category). `feat_28` encodes local fine structure (which side of boundary, surface tilt, edge direction). The dense prediction requires both — global scale from $h$, local spatial variation from `feat_28`. Broadcasting $h$ across 28×28 positions and fusing with Conv1×1 implements this naturally: the conv learns "given global depth context $h$ and local feature $f$, predict depth at this exact position."
-
-This is structurally identical to how DPT combines ViT global tokens with fine-scale reassembled features via concatenation and projection.
-
-### 6.6 Depth Head (v15: Global + Local fusion)
-
-**Input:** $h^{(\text{final})} \in \mathbb{R}^{B \times K \times 192}$ and $\text{local\_feat} \in \mathbb{R}^{B \times K \times 32}$.
-
-```
-h_combined = concat([h_final, local_feat], dim=-1)  ∈ R^{224}
-raw = W_r2 · GELU(W_r1 · h_combined + b_r1) + b_r2   (224 → 384 → 1)
-depth_hat = exp(raw · exp(s))
-```
-
-Learnable scale $s$ initialized to 0 (same as v14). Bias $b_{r2}$ initialized to $\ln(2.5)$.
-
-**Depth head params:** Linear(224→384) ~86K + Linear(384→1) ~384 + scale ~1 = **~87K** (vs ~74K in v14; +13K from wider input).
+|---|---:|
+| Conv1×1(768→64) + LN | 768×64 + 64×3 ≈ **49K** |
+| Conv1×1(384→64) + LN | 384×64 + 64×3 ≈ **25K** |
+| Conv1×1(192→64) + LN | 192×64 + 64×3 ≈ **13K** |
+| refinenet4: RCU2 (2× Conv3×3(64→64)) + Conv1×1 | 2×(64²×9+64) + 64²+64 ≈ **78K** |
+| refinenet3: RCU1+RCU2 (4× Conv3×3(64→64)) + Conv1×1 | 4×(64²×9+64) + 64²+64 ≈ **152K** |
+| **DPT total (inference)** | **~317K** |
 
 ---
 
-## 7. Training
+## 6. Per-Query Prediction
 
-### 7.1 Dataset (unchanged from v14)
+**No global_h.** The s8 branch of the local path already samples a 9×9 neighborhood from `stride_8_map`, injecting global depth context. A separate single-pixel global_h lookup is unnecessary and untrained (training is purely dense — no per-query path). All learnable parameters in the decoder are convolution or projection layers; no MLP, no attention.
 
-NYU Depth V2, 416×544 (BTS augmentation: random crop from 480×640, random rotation ±2.5°, horizontal flip, BTS color augmentation).
+**Inference is a direct application of the dense-trained Conv weights at query positions using valid convolutions.** The Conv1×1(32→1) depth head is the same layer that produces the H×W dense output during training.
 
-### 7.2 Loss Functions (v15)
+### 6.1 Local Patch Sampling (Inference)
 
-$$\mathcal{L} = L_{\text{silog}}(\hat{d}_q, d_q^*) + \lambda_{\text{canvas}} \cdot L_{\text{dense\_silog}}(\hat{D}_{\text{canvas}}, D^*_{\downarrow 4}) + \lambda_{\text{local}} \cdot L_{\text{dense\_silog}}(\hat{D}_{\text{local}}, D^*_{\text{patch}})$$
+**RF justification:** One pixel in `stride_8_map` (at stride 8) has a receptive field of 9×9 in L2@stride-8 space, accumulated from 6× Conv3×3 through refinenet4+refinenet3. To match this coverage in L1@stride-4 space, we need 18×18 L1 cells. At inference, however, we only need the feature at the single query center pixel — and with valid convolutions, a 9×9 input suffices to produce a 1×1 output after 4× valid Conv3×3 (9→7→5→3→1). The local path samples only what is needed.
 
-**Primary — Sparse SILog on K=256 query predictions:**
-$$L_{\text{silog}} = \sqrt{\frac{1}{K}\sum_q \delta_q^2 - 0.50 \left(\frac{1}{K}\sum_q \delta_q\right)^2}, \quad \delta_q = \log\hat{d}_q - \log d_q^*$$
+**Two grid_sample calls per query group (inference):**
 
-**Canvas auxiliary (training only, inherited from v14):**
+```python
+# Inputs:
+# L1: [B, 96, H4, W4]           (H4=104, W4=136 at 416×544)
+# stride_8_map: [B, 64, H8, W8]  (H8=52, W8=68)
 
-Canvas L2 dense head (v14 design, kept in v15): upsampled canvas L2 → `canvas_head_L2: Conv(192→64,k3)+GELU+Conv(64→1,k1)` applied after ×2 upsample → stride-4 predictions → `L_dense_silog` vs GT at stride 4. $\lambda_{\text{canvas}} = 0.5$.
+B, K, _ = coords.shape
+H4, W4 = L1.shape[2], L1.shape[3]
+H8, W8 = stride_8_map.shape[2], stride_8_map.shape[3]
 
-**LDRM local patch dense training (training only, new in v15):**
+N = 9  # patch size for both s8 and L1
 
-$\hat{D}_{\text{local}} \in \mathbb{R}^{B \times K \times 1 \times 28 \times 28}$: dense depth map for each query's local 28×28 patch.
+# Half-offsets: [-4,...,4] for 9-point grid (centered at query)
+half = N // 2   # = 4
+dx = torch.arange(-half, half + 1, device=L1.device, dtype=torch.float32)  # 9 values
+dy = torch.arange(-half, half + 1, device=L1.device, dtype=torch.float32)
+gy, gx = torch.meshgrid(dy, dx, indexing='ij')  # [9, 9]
 
-$D^*_{\text{patch}}$: for each query at $(u, v)$, extract 28×28 crop from the full-resolution GT depth map.
+# --- s8 patch (stride-8 space) ---
+cx_s8 = coords[..., 0] / 8.0   # [B, K]
+cy_s8 = coords[..., 1] / 8.0
+sx_s8 = cx_s8[..., None, None] + gx   # [B, K, 9, 9]
+sy_s8 = cy_s8[..., None, None] + gy
+grid_s8 = torch.stack([
+    2.0 * sx_s8 / (W8 - 1) - 1.0,
+    2.0 * sy_s8 / (H8 - 1) - 1.0
+], dim=-1).reshape(B, K * N, N, 2)
+raw_s8 = F.grid_sample(stride_8_map, grid_s8, mode='bilinear',
+                        padding_mode='zeros', align_corners=True)
+# raw_s8: [B, 64, K*9, 9] → [B*K, 64, 9, 9]
+s8_patches = raw_s8.reshape(B, 64, K, N, N).permute(0,2,1,3,4).reshape(B*K, 64, N, N)
 
-$\lambda_{\text{local}} = 0.3$ (scale relative to primary; the dense terms provide many more gradient terms — K×784 vs K). **Important:** both $h$-broadcast and local_feat contribute gradient, but the primary depth head (on a single local position) is the inference-critical path.
+# --- L1 patch (stride-4 space) ---
+cx_l1 = coords[..., 0] / 4.0
+cy_l1 = coords[..., 1] / 4.0
+sx_l1 = cx_l1[..., None, None] + gx   # [B, K, 9, 9]
+sy_l1 = cy_l1[..., None, None] + gy
+grid_l1 = torch.stack([
+    2.0 * sx_l1 / (W4 - 1) - 1.0,
+    2.0 * sy_l1 / (H4 - 1) - 1.0
+], dim=-1).reshape(B, K * N, N, 2)
+raw_l1 = F.grid_sample(L1, grid_l1, mode='bilinear',
+                        padding_mode='zeros', align_corners=True)
+# raw_l1: [B, 96, K*9, 9] → [B*K, 96, 9, 9]
+L1_patches = raw_l1.reshape(B, 96, K, N, N).permute(0,2,1,3,4).reshape(B*K, 96, N, N)
+```
 
-**Training-only params:** `dense_head` Conv2d(224→1) = 225 params + `canvas_head_L2` ~111K = **~111K training-only params** (not present at inference).
+**Memory (B=2, K=128):** `s8_patches` [256, 64, 9, 9] ≈ 5.3MB; `L1_patches` [256, 96, 9, 9] ≈ 8.0MB. Minimal.
 
-### 7.3 Training Setup
+### 6.3 Local Fusion — Valid Conv Cascade (Inference) / Padded Conv Dense (Training)
+
+The local path uses **identical conv weights** in two execution modes:
+
+| Mode | Padding | Input | Output |
+|---|---|---|---|
+| Inference | **valid** (no pad) | 9×9 patches per query | 3×3 per query → take center |
+| Training | **same** (pad=1) | Full feature maps [B, C, H/s, W/s] | Dense [B, 32, H, W] |
+
+**Inference — step by step:**
+
+```python
+# s8 branch: refine stride_8_map context
+x_s8 = F.gelu(self.conv_s8_1(s8_patches))  # valid Conv3×3(64→64): [B*K, 64, 9,9] → [B*K, 64, 7,7]
+x_s8 = F.gelu(self.conv_s8_2(x_s8))        # valid Conv3×3(64→64): [B*K, 64, 7,7] → [B*K, 64, 5,5]
+x_s8 = F.interpolate(x_s8, size=(9, 9), mode='bilinear', align_corners=True)
+# x_s8: [B*K, 64, 9, 9]  ← upsampled back to L1 patch size
+
+# L1 branch: project and merge
+x_l1 = self.proj_l1(L1_patches)            # Conv1×1(96→64): [B*K, 96, 9,9] → [B*K, 64, 9,9]
+x = F.gelu(x_s8 + x_l1)                    # add: [B*K, 64, 9, 9]
+
+# Post-merge valid conv block 1
+x = F.gelu(self.conv_m1(x))    # valid Conv3×3(64→64): 9→7
+x = F.gelu(self.conv_m2(x))    # valid Conv3×3(64→64): 7→5
+x = F.interpolate(x, size=(7, 7), mode='bilinear', align_corners=True)
+
+# Post-merge valid conv block 2
+x = F.gelu(self.conv_u1(x))    # valid Conv3×3(64→64): 7→5
+x = F.gelu(self.conv_u2(x))    # valid Conv3×3(64→64): 5→3
+x = F.interpolate(x, size=(5, 5), mode='bilinear', align_corners=True)
+
+# Final: reduce channels, valid conv → 3×3, take center
+x = F.gelu(self.conv_f(x))     # valid Conv3×3(64→32): 5→3
+local_h = x[:, :, 1, 1]        # center of 3×3 → [B*K, 32]
+local_h = local_h.reshape(B, K, 32)
+```
+
+**Spatial trace (inference, valid convolutions):**
+
+| Step | Size | Notes |
+|---|---|---|
+| s8 sample | 9×9 | from stride_8_map |
+| conv_s8_1 | 7×7 | valid |
+| conv_s8_2 | 5×5 | valid |
+| upsample | 9×9 | bilinear to match L1 |
+| L1 sample + proj | 9×9 | merge (add) |
+| conv_m1 | 7×7 | valid |
+| conv_m2 | 5×5 | valid |
+| upsample | 7×7 | bilinear |
+| conv_u1 | 5×5 | valid |
+| conv_u2 | 3×3 | valid |
+| upsample | 5×5 | bilinear |
+| conv_f (64→32) | 3×3 | valid |
+| **center [1,1]** | **1×1** | **= local_h [32-dim]** |
+
+**Training — same weights, padded convolutions, full feature maps:**
+
+```python
+# --- s8 branch (on full stride_8_map [B, 64, H/8, W/8]) ---
+x_s8 = F.gelu(self.conv_s8_1(stride_8_map))   # padded Conv3×3 → [B, 64, H/8, W/8]
+x_s8 = F.gelu(self.conv_s8_2(x_s8))           # padded Conv3×3 → [B, 64, H/8, W/8]
+x_s8 = F.interpolate(x_s8, scale_factor=2, mode='bilinear', align_corners=True)
+# x_s8: [B, 64, H/4, W/4]
+
+# --- L1 branch (on full L1 [B, 96, H/4, W/4]) ---
+x_l1 = self.proj_l1(L1)                       # Conv1×1(96→64) → [B, 64, H/4, W/4]
+x = F.gelu(x_s8 + x_l1)                       # merge: [B, 64, H/4, W/4]
+
+# --- post-merge dense ---
+x = F.gelu(self.conv_m1(x))                   # padded Conv3×3 → [B, 64, H/4, W/4]
+x = F.gelu(self.conv_m2(x))                   # padded Conv3×3 → [B, 64, H/4, W/4]
+x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=True)
+# x: [B, 64, H/2, W/2]
+
+x = F.gelu(self.conv_u1(x))                   # padded Conv3×3 → [B, 64, H/2, W/2]
+x = F.gelu(self.conv_u2(x))                   # padded Conv3×3 → [B, 64, H/2, W/2]
+x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=True)
+# x: [B, 64, H, W]
+
+dense_feat = F.gelu(self.conv_f(x))           # padded Conv3×3(64→32) → [B, 32, H, W]
+
+# --- dense training head (training only, ~33 params) ---
+dense_depth = torch.exp(self.dense_head(dense_feat))  # Conv1×1(32→1) → [B, 1, H, W]
+
+# --- extract local_h at K positions for depth head training ---
+# coords: [B, K, 2] pixel positions (x, y)
+local_h = dense_feat[:, :, coords_y, coords_x]        # [B, 32, K] → permute → [B, K, 32]
+```
+
+The **upsampling chain in training** (×2 × 3 = ×8 total) takes stride_8_map → stride_1, matching the encoder's stride exactly. The same conv weights that compute per-query valid-conv inference produce full-resolution dense features at training time — no separate conv layers, no weight mismatch.
+
+### 6.4 Training vs Inference: Same Weights, Different Execution
+
+| Property | Inference | Training |
+|---|---|---|
+| Padding mode | **valid** (no pad) | **same** (pad=1) |
+| Input to local path | 9×9 patches per query | Full feature maps |
+| Output | 1×1 per query → local_h | H×W dense → dense SILog |
+| local_h for depth head | From center of 3×3 (valid conv output) | Indexed from dense_feat at K positions |
+| Compute | O(K) | O(H×W) |
+| VRAM at B=2, K=128 | ~14MB patches | ~dense_feat [2,32,416,544] ≈ 55MB |
+
+**Why valid convolutions give the same result as dense padded at the center pixel:** A Conv3×3 with same-padding at a pixel far from the border computes the same output as a Conv3×3 without padding on a patch centered at that pixel. Valid conv on a P×P patch gives a (P−2)×(P−2) output — exactly the center pixel of the padded result. Repeating for 4 conv layers: 9→7→5→3→1 (with upsample restoring spatial size between valid-conv blocks). The center [1,1] of the final 3×3 is the exact per-pixel value from the dense padded path.
+
+### 6.5 Depth Head (Inference)
+
+The depth head is **the same Conv1×1(32→1) layer** used in dense training — no separate MLP, no global_h concat. At inference, it applies to the 1×1 local feature at the query center:
+
+```python
+# local_feat: [B*K, 32] — center [1,1] of conv_f output
+depth = torch.exp(self.dense_head(local_feat.unsqueeze(-1).unsqueeze(-1)))
+# dense_head = Conv1×1(32→1), same weights as training
+# depth: [B, K]
+```
+
+Bias of Conv1×1 initialized to ln(2.5) (metric depth prior). No `log_scale` parameter.
+
+**Why Conv1×1 not MLP:** Training is purely dense — no K-query forward pass at training. The only trained depth head is Conv1×1(32→1). At inference, applying the same Conv1×1 to the 1×1 center feature is equivalent to a linear(32→1). This is consistent: conv weights learned from dense prediction generalize to per-query prediction because the valid-conv center pixel matches the padded-conv dense output at that position.
+
+**Depth head params:** Conv1×1(32→1) = 32 + 1 = **33 params ≈ ~0K** (vs ~74K in v14).
+
+---
+
+## 7. Training Strategy
+
+### 7.1 Training: Purely Dense, No K Queries
+
+Training uses **no per-query sampling at all**. The full forward pass at training time:
+
+1. Encoder → L1, L2, L3, L4
+2. DPT FPN → stride_8_map [B, 64, H/8, W/8]
+3. Local path (padded convs on full maps) → dense_feat [B, 32, H, W]
+4. dense_head: Conv1×1(32→1)(dense_feat) → dense_depth [B, 1, H, W]
+5. Loss: dense SILog against GT depth map (all valid pixels)
+
+All learnable parameters — DPT projections, RCU Conv3×3, proj_l1, conv_s8_1/2, conv_m1/2, conv_u1/2, conv_f, dense_head — are trained via this single dense pass. No MLP, no Q-sampling, no K² cost.
+
+**At inference:** K=128 random valid-pixel queries. Each query uses the valid-conv path (9×9 patches → center 1×1). The dense_head Conv1×1(32→1) applies to the 32-dim center feature → depth.
+
+### 7.2 Loss Function
+
+Single dense SILog loss:
+```python
+# Training forward pass (no queries)
+x_s8 = self.conv_s8_block(stride_8_map)      # padded convs + bilinear ×2 → [B, 64, H/4, W/4]
+x_l1 = self.proj_l1(L1)                       # [B, 64, H/4, W/4]
+x = self.merge_block(x_s8 + x_l1)             # padded convs + bilinear ×2 → [B, 64, H/2, W/2]
+x = self.upsample_block(x)                    # padded convs + bilinear ×2 → [B, 64, H, W]
+dense_feat = self.conv_f(x)                   # padded Conv3×3(64→32) → [B, 32, H, W]
+dense_depth = torch.exp(self.dense_head(dense_feat))  # Conv1×1(32→1) → [B, 1, H, W]
+
+loss = l_dense_silog(dense_depth, gt_depth_map, lambda_var=0.5)
+# Masks d=0 (invalid GT). All valid pixels contribute.
+```
+
+$$\mathcal{L} = \mathcal{L}_{\text{dense SILog}}$$
+
+No secondary loss terms. No K-dependent terms.
+
+### 7.3 Dense Coverage Comparison
+
+| Training supervision | Pixel coverage |
+|---|---|
+| v14: Canvas L2 aux head (×2 upsample → stride 4) | **6.25%** |
+| v15: Dense padded-conv local path → H×W prediction | **100% (all valid pixels)** |
+| DPT (DAv2-S): Dense decoder to stride 1 | **100%** |
+
+v15 training is architecturally equivalent to DPT training: same dense padded convs, same H×W supervision. The only difference is the s8 branch (which injects stride_8_map context before L1 fusion) and stopping the global FPN at stride 8 instead of stride 1.
+
+### 7.4 Training Setup
 
 | Setting | v14 | v15 |
-|---------|-----|-----|
-| Optimizer | AdamW | AdamW |
-| LR (decoder + neck) | 1×10⁻⁴ | 1×10⁻⁴ |
-| LR (encoder) | 1×10⁻⁵ | 1×10⁻⁵ |
-| Batch size | 6 | 4–6 (watch VRAM with LDRM) |
-| K queries per image | 256 | 256 (ablate 128 later) |
+|---|---|---|
+| K (training) | 256 random valid pixels | **None — purely dense** |
+| K (inference / evaluation) | 128–256 | **128** |
+| Local path training | Per-query patches | **Dense padded conv (H×W)** |
+| Batch size | 4–6 | **4** |
+| LR encoder | 1×10⁻⁵ | 1×10⁻⁵ |
+| LR decoder (DPT fusion + local path) | 1×10⁻⁴ | **1×10⁻⁴** |
 | Epochs | 25 | 25 |
-| Gradient clip | 1.0 | 1.0 |
-| Attention dropout | 0.1 | 0.0 (no attention-based self-attn in v15) |
 | Resolution | 416×544 | 416×544 |
-
-**VRAM concern:** LDRM adds peak tensor [B×K, 192, 14, 14] ≈ 144MB at B=6, K=256. If OOM, reduce to K=128 during training (evaluation can use K=256 by running in inference mode without LDRM dense head).
-
----
-
-## 8. Evaluation (unchanged from v14)
-
-Metrics: AbsRel, RMSE, $\delta < 1.25^n$ at K query points on NYU Eigen test split. All evaluations at depth range [1e-3, 10]m.
+| Dataset | NYU Depth V2, BTS augmentation | Same |
+| λ_var (SILog) | 0.50 | **0.85** (standard dense-model value) |
+| Loss | Sparse SILog + dense aux | **Single dense SILog** |
 
 ---
 
-## 9. Parameter Count Summary
+## 8. Parameter Count
 
 | Component | v14 | v15 | Delta |
-|-----------|----:|----:|------:|
-| Encoder (ConvNeXt V2-T) | 28,600K | 28,600K | 0 |
-| Neck projections | 278K | 56K | −222K |
-| L4 self-attention | 886K | **0** | −886K |
-| Pre-compute (proj_L3/L4 + B3b KV) | 148K | 812K | +664K |
-| Seed constructor | 160K | 160K | 0 |
-| MSDA (3 layers, incl. canvas) | 2,055K | 2,274K | +219K |
-| B3b (2 layers, excl. pre-compute KV) | 1,334K | 964K | −370K |
-| Triple canvas (shared with MSDA/B3b) | 816K | 816K | 0 |
-| LDRM | 0 | **203K** | +203K |
-| Depth head | 74K | 87K | +13K |
-| **Total inference** | **~34,351K** | **~33,972K** | **−379K** |
-| Training-only (canvas head + dense head) | ~111K | ~111K | ≈0 |
+|---|---:|---:|---:|
+| Encoder ConvNeXt V2-T | 28,600K | 28,600K | 0 |
+| Projection neck (4 levels → 192) | 278K | **0** | −278K |
+| L4 self-attention (2 layers) | 886K | **0** | −886K |
+| Pre-compute (proj_L3/L4 + B3b KV) | 148K | **0** | −148K |
+| Seed constructor (B1) | 160K | **0** | −160K |
+| MSDA 3 layers (incl. canvas) | 2,055K | **0** | −2,055K |
+| B3b 2 layers (incl. canvas) | 1,334K | **0** | −1,334K |
+| Triple spatial canvas | 816K | **0** | −816K |
+| **DPT-style FPN fusion** | — | **317K** | +317K |
+| **Local patch path** | — | **246K** | +246K |
+| Depth head | 74K | **~0K** (Conv1×1(32→1) = 33 params) | −74K |
+| **Total (inference)** | **~34,351K** | **~29,163K** | **−5,188K** |
+| Training-only heads | ~111K | **~0K** (dense_head = same as inference) | −111K |
 
-Net: v15 is slightly smaller than v14 (~380K fewer params) while having richer L3/L4 representations and per-query local refinement.
+Local patch path breakdown:
+- Conv3×3(64→64) `conv_s8_1`: 64×64×9 + 64 ≈ **37K**
+- Conv3×3(64→64) `conv_s8_2`: **37K**
+- Conv1×1(96→64) `proj_l1`: 96×64 + 64 ≈ **6K**
+- Conv3×3(64→64) `conv_m1`: **37K**
+- Conv3×3(64→64) `conv_m2`: **37K**
+- Conv3×3(64→64) `conv_u1`: **37K**
+- Conv3×3(64→64) `conv_u2`: **37K**
+- Conv3×3(64→32) `conv_f`: 64×32×9 + 32 ≈ **18K**
+- **Local path total: ~246K**
 
----
-
-## 10. Open Design Questions
-
-### 10.1 K=128 vs K=256
-
-With LDRM providing rich local context per query, each query prediction is more accurate. Fewer queries may suffice at training time while maintaining evaluation quality. Experiment: train v15 with K=128 (halves LDRM VRAM), evaluate with K=256 (model is K-agnostic).
-
-### 10.2 LDRM Patch Size: 7×7 vs 5×5 vs 9×9
-
-7×7 covers 28×28 pixels (±12px from query center). At stride 4, 7 cells × 4px = 28px. Larger patches (9×9 = 36px coverage) increase context but also increase [B×K, d, 9×2, 9×2] intermediate tensors and overlap between nearby queries. Start with 7×7 as the principled midpoint.
-
-### 10.3 L3 Native Dimension: 384 vs 256
-
-384 preserves all ConvNeXt V2 Stage 3 information. 256 provides 33% compression (less lossy than 192, still saves MSDA V proj params). Start with 384; ablate 256 if VRAM is constrained.
-
-### 10.4 Canvas L2 Dense Head vs LDRM Dense Training
-
-Both supervise depth at fine spatial resolution. Canvas L2 head: coarser (stride 4 via ×2 up), covers more area uniformly. LDRM: stride 1, but only covers query neighborhoods. They are COMPLEMENTARY:
-- Canvas head supervises the canvas features to encode depth everywhere (including non-query positions)
-- LDRM supervises local fine-grained predictions at query positions with sub-pixel precision
-
-Keep both in v15 training.
-
-### 10.5 Ablation Priority
-
-| Ablation | Expected insight |
-|----------|-----------------|
-| v15 vs v14 baseline | Net effect of all v15 changes together |
-| v15 − LDRM | Is local fine-grained refinement actually needed? |
-| v15 − L3/L4 high dim | Does keeping native dims actually help? |
-| v15 + Q2Q (add back) | Confirms Q2Q removal was correct |
-| v15 K=128 vs K=256 | Diminishing returns from more queries given LDRM |
-
-Build these as checkpoints from the same v15 training run if possible — saves training time.
+DPT fusion breakdown:
+- Projections (3× Conv1×1 + LN): 49K + 25K + 13K = **87K**
+- refinenet4 (RCU2 + Conv1×1): 2×(64²×9+64) + 64²+64 = **78K**
+- refinenet3 (RCU1 + RCU2 + Conv1×1): 4×(64²×9+64) + 64²+64 = **152K**
+- **DPT total: ~317K**
 
 ---
 
-## 11. Theoretical Justification
+## 9. Open Design Questions
 
-### 11.1 Local→Global→Local Design
+### 9.1 s8 Branch Channel Width: D=64 Throughout vs Bottleneck
 
-The v15 architecture implements a principled three-phase information flow:
+Current: all conv layers in the local path use D=64 (matching stride_8_map). If s8 context requires more capacity before merging with L1, consider expanding: conv_s8_1/2 at D=128, then project back to D=64 before merge. Tradeoff: more params/MACs in s8 branch but richer representation.
 
-1. **Local (B1 Seed):** Each query initializes from multi-scale center features — coarse-to-fine local context at the query position.
-2. **Global (MSDA + B3b Decoder):** 5 decoder layers give each query deformable access to multi-scale features anywhere in the image, plus full attention to all L4 tokens. The query learns global scene structure, depth scale, room layout.
-3. **Local (LDRM):** After global context is established, the query examines its fine-grained local neighborhood. The LDRM provides depth boundary information, surface tilt, and sub-pixel positional accuracy that the global decoder cannot provide.
+Start with D=64 flat. Ablate if s8 signal is not propagating effectively (diagnostic: measure performance when s8 branch is zeroed out).
 
-This local→global→local pattern appears in many successful architectures:
-- **U-Net:** Encoder (local→global downsampling) + Decoder (global→local upsampling)
-- **DPT:** ViT encoder (global) + multi-resolution reassemble (local) + progressive upsampling (local→stride 1)
-- **PointNet++:** Hierarchical ball queries (local→global) + interpolation (global→local)
+### 9.2 Local Path Final Channels: 32 vs 64
 
-v15 is the first sparse depth architecture to explicitly close this loop per-query.
+Current: conv_f(64→32) → center[32] → Conv1×1(32→1). Increasing to 64 would give: conv_f(64→64) → center[64] → Conv1×1(64→1). Tradeoff: 18K more params, no MACs change at inference (valid conv, same spatial sizes). Likely negligible at this stage.
 
-### 11.2 Spatial Inductive Bias
+Start with 32. If depth predictions are noisy at boundaries, try 64.
 
-| Mechanism | Spatial structure | Appropriate for |
+### 9.3 λ_var for Dense SILog: 0.5 vs 0.85
+
+Standard SILog for dense depth models (BTS, DPT) typically uses λ=0.85. v14 used λ=0.5 to reduce variance sensitivity during sparse training. With dense training, λ=0.85 is appropriate — more scale-invariant, less sensitive to depth scale drift. If training is unstable, reduce to 0.5.
+
+Start with λ=0.85.
+
+### 9.4 Inference K: Fixed vs Adaptive
+
+At inference, K=128 random valid-pixel queries. Since training is purely dense, the model generalizes to ANY query positions (no distribution shift from grid training). Options:
+- **Random valid-pixel** (default): maximizes coverage in valid regions
+- **Uniform grid at inference:** avoids clustering, predictable error distribution
+
+Since training is dense (no K-sampling bias), start with random valid-pixel queries.
+
+### 9.5 Backbone: ConvNeXt V2-T vs ViT-S
+
+For peak performance: ViT-S + DPT is the state-of-the-art choice (Depth Anything V2 style). ConvNeXt V2-T + DPT-style is validated by UniDepth V1. To cleanly evaluate the decoder architecture (v15 contribution): run the same DPT FPN + local patch head with ViT-S backbone and compare. If ViT-S gives major gains, the current approach is backbone-limited; if not, the decoder is the key contribution.
+
+---
+
+## 10. Theoretical Justification
+
+### 10.1 Causal Correctness: DPT vs Canvas
+
+| | Triple Canvas (v14) | DPT Fusion (v15) |
 |---|---|---|
-| MSDA | Deformable — learned, any position | Multi-scale feature gathering |
-| B3b | Global — all L4 positions | Scene-level semantics |
-| Triple Canvas | Dense local grid — proximity-based | Surface continuity, boundary propagation |
-| ~~Q2Q~~ (removed) | Dense global — all queries, no position bias | Not appropriate for spatially-structured tasks |
-| LDRM | Dense local — 28×28 per query | Fine boundary structure, sub-pixel positioning |
+| **Direction** | Top-down: queries scatter-write → canvas learns | Bottom-up: encoder features → dense map |
+| **Dependency** | Dense map quality depends on query predictions | Dense map built purely from encoder, independent of queries |
+| **Supervision** | Canvas starts random; queries must learn write AND read simultaneously | Dense map directly supervised (stride-8 aux head); queries learn to read from a supervised map |
+| **Cold start** | Circular: bad queries → bad canvas → bad queries | Stable: encoder gives good stride-8 features from epoch 1; queries can read from a meaningful map immediately |
 
-The principle: depth is a spatially-structured prediction. Mechanisms with spatial structure (canvas, LDRM) outperform mechanisms without it (Q2Q) for this task.
+The canvas forces queries to bootstrap the dense map from scratch. DPT builds the map independently and queries sample from it — a clean, one-directional dependency.
+
+### 10.2 The MSDA Problem
+
+MSDA's deformable sampling performs $K \times L \times H_{\text{attn}} \times N_{\text{pts}}$ bilinear lookups (at 416×544: 256×4×6×4 = 24,576 lookups per forward pass), each from a different predicted offset. These offsets are predicted per query per layer per level — a complex optimization landscape. The DPT-style global fusion pre-aggregates all multi-scale information into one stride-8 map, replacing 24,576 scattered lookups with K=128 straightforward bilinear samples from a supervised dense map.
+
+### 10.3 Dense Training Signal Effectiveness
+
+| | SILog loss terms (B=2, 416×544, ~80% valid pixels) |
+|---|---|
+| v14: Sparse point (K=256) | **512 terms** |
+| v14: Canvas L2 aux (stride 4, 52×68 = 3,536 positions) | **7,072 terms** |
+| **v15: Full-image dense (226,304 × 80% valid)** | **~181,000 terms** |
+
+v15's dense training loss contributes ~25× more gradient terms than v14's total. The conv layers (conv_m1/2, conv_u1/2, conv_f) receive dense gradients at every spatial position — not scattered at K query centers — enabling proper learning of depth boundary sharpness.
+
+### 10.4 Local→Global→Local Design
+
+v15 restores the principled information flow:
+
+1. **ConvNeXt (Local→Global):** Hierarchical encoder aggregates local texture into global scene features across 4 scales.
+2. **DPT Fusion (Global):** Top-down FPN fuses all scales into a stride-8 representation with global context at every spatial position.
+3. **Per-Query Local L1 (Global→Local):** After global context is encoded in `stride_8_map`, each query re-examines its fine-grained local neighborhood at stride 4→1 for sub-pixel precision.
+
+This mirrors successful patterns: U-Net (encoder↓ + decoder↑), DPT (ViT global + reassemble local), PointNet++ (ball queries local → hierarchical global → interpolation local). v15 implements the same principle for sparse query depth in an efficient O(K) local path.
+
+---
+
+## 11. MACs Analysis
+
+**Setup:** 416×544 input. ConvNeXt V2-T encoder ~10G MACs (scales roughly linearly with image area from 4.5G at 224×224). All decoder MACs computed as $H \times W \times C_{out} \times C_{in} \times k^2$ per Conv2d layer.
+
+### 11.1 Decoder MACs Breakdown
+
+**Global DPT path (once per image, K-independent, D=64, full RCU):**
+
+| Component | Resolution | MACs |
+|---|---|---:|
+| Conv1×1(768→64) proj_L4 | 13×17=221 | **10.9M** |
+| Conv1×1(384→64) proj_L3 | 26×34=884 | **21.7M** |
+| Conv1×1(192→64) proj_L2 | 52×68=3,536 | **43.4M** |
+| refinenet4: RCU2 — 2× Conv3×3(64→64) | 13×17=221 | **16.3M** |
+| refinenet4: Conv1×1(64→64) out | 26×34=884 | **3.6M** |
+| refinenet3: RCU1 — 2× Conv3×3(64→64) | 26×34=884 | **65.1M** |
+| refinenet3: RCU2 — 2× Conv3×3(64→64) | 26×34=884 | **65.1M** |
+| refinenet3: Conv1×1(64→64) out | 52×68=3,536 | **14.5M** |
+| **Global path total (inference)** | | **~241M** |
+
+**Per-query local path (valid conv, inference only):**
+
+MACs per query = sum over all valid-conv layers (no padding, spatial size shrinks):
+
+| Component | Input→Output spatial | MACs per query |
+|---|---|---:|
+| conv_s8_1: Conv3×3(64→64) valid | 9×9 → 7×7 = 49 pos | **1.81M** |
+| conv_s8_2: Conv3×3(64→64) valid | 7×7 → 5×5 = 25 pos | **0.92M** |
+| bilinear upsample 5→9 | — | ~0 |
+| proj_l1: Conv1×1(96→64) | 9×9 = 81 pos | **0.50M** |
+| conv_m1: Conv3×3(64→64) valid | 9×9 → 7×7 = 49 pos | **1.81M** |
+| conv_m2: Conv3×3(64→64) valid | 7×7 → 5×5 = 25 pos | **0.92M** |
+| bilinear upsample 5→7 | — | ~0 |
+| conv_u1: Conv3×3(64→64) valid | 7×7 → 5×5 = 25 pos | **0.92M** |
+| conv_u2: Conv3×3(64→64) valid | 5×5 → 3×3 = 9 pos | **0.33M** |
+| bilinear upsample 3→5 | — | ~0 |
+| conv_f: Conv3×3(64→32) valid | 5×5 → 3×3 = 9 pos | **0.17M** |
+| dense_head: Conv1×1(32→1) | 1×1 | ~0 |
+| **Per-query total** | | **~7.4M** |
+
+Valid convolutions never exceed 9×9 = 81 positions per layer — vs the old design's 32×32 = 1,024 positions for `conv_local_2` (9.44M alone). The largest input is 9×9 (81 pos), giving 56% lower per-query MACs.
+
+**Training dense path MACs (one full image forward pass):**
+
+| Component | Resolution | MACs |
+|---|---|---:|
+| Global DPT (refinenet4+3) | — | **241M** |
+| conv_s8_1+s8_2 (padded) | 52×68 = 3,536 | 2×3,536×64²×9 = **262M** |
+| proj_l1 (padded) | 104×136 = 14,144 | 14,144×64×96 = **87M** |
+| conv_m1+m2 (padded) | 104×136 = 14,144 | 2×14,144×64²×9 = **1,048M** |
+| conv_u1+u2 (padded) | 208×272 = 56,576 | 2×56,576×64²×9 = **4,196M** |
+| conv_f (padded, 64→32) | 416×544 = 226,304 | 226,304×32×64×9 = **4,196M** |
+| dense_head (Conv1×1, 32→1) | 226,304 | 226,304×32 = **7M** |
+| **Training total** | | **~10.0G** |
+
+Training cost is equivalent to a full DPT-style dense decoder pass — expected and acceptable.
+
+### 11.2 Total v15 Decoder MACs vs K (Inference)
+
+Per-query cost: **~7.4M** (valid-conv path).
+
+| K | Global path | Per-query | **v15 decoder** |
+|---:|---:|---:|---:|
+| 32 | 241M | 237M | **478M** |
+| 64 | 241M | 474M | **715M** |
+| 128 | 241M | 947M | **1,188M** |
+
+### 11.3 Model-Level MACs Comparison
+
+| Model | Encoder | Decoder | **Total** | NYU AbsRel |
+|---|---:|---:|---:|---:|
+| DAv2-S (ViT-S + DPT D=64, dense, 518×518) | ~38G | ~11.6G | **~49G** | ~0.048 |
+| Full DPT D=64, ConvNeXt, 416×544 (to stride 2) | ~10G | ~3.2G | **~13.2G** | — |
+| v14 (ConvNeXt + MSDA + canvas, K=256) | ~10G | ~8G | **~18G** | 0.240+ |
+| **v15 (K=64, inference)** | ~10G | ~0.7G | **~10.7G** | TBD |
+| **v15 (K=128, inference)** | ~10G | ~1.2G | **~11.2G** | TBD |
+| **v15 (training, dense)** | ~10G | ~10.0G | **~20G** | — |
+
+**Full DPT dense decoder (D=64) breakdown** — what we avoid by stopping at stride 8 and using per-query patches:
+
+| Component | Resolution | MACs |
+|---|---|---:|
+| Projections (all 4 levels) | L4/L3/L2/L1 | **163M** |
+| refinenet4: RCU2 | 13×17=221 | **16.3M** |
+| refinenet4: Conv1×1 out | 26×34=884 | **3.6M** |
+| refinenet3: RCU1+RCU2 | 26×34=884 | **130M** |
+| refinenet3: Conv1×1 out | 52×68=3,536 | **14.5M** |
+| refinenet2: RCU1+RCU2 | 52×68=3,536 | **520M** |
+| refinenet2: Conv1×1 out | 104×136=14,144 | **57.9M** |
+| refinenet1: RCU1+RCU2 | 104×136=14,144 | **2,082M** |
+| refinenet1: Conv1×1 out | 208×272=56,576 | **231M** |
+| **Full DPT (4 refinenets, to stride 2)** | | **~3,219M** |
+
+`refinenet1` at stride-4 (14,144 positions) alone costs **2,082M** — more than our entire v15 decoder at K=64 (1,329M). Stopping the global path at stride 8 and handling fine detail per-query saves this cost for K ≤ 175.
+
+### 11.4 D-Dimension Comparison (Global Path Only)
+
+All rows assume full RCU FeatureFusionBlock. `proj_s8` = Conv1×1(D→64) needed at D>64 for the per-query local path.
+
+| D | Projections | refinenet4 | refinenet3 | proj_s8 | **Global total** | v15 K=64 | v15 K=128 |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| **64** | 76M | 20M | 145M | 0M | **241M** | **1,329M** | **2,417M** |
+| 128 | 152M | 80M | 578M | 29M | **839M** | **1,927M** | **3,015M** |
+| 192 | 228M | 179M | 1,300M | 43M | **1,750M** | **2,838M** | **3,926M** |
+| 256 | 304M | 318M | 2,317M | 58M | **2,997M** | **4,085M** | **5,173M** |
+
+At D=64, the global path (241M) is only 18% of the total decoder at K=64 (1,329M) — dominated by per-query local path (82%). At D=256, the global path (2,997M) dominates. D=64 keeps the global path inexpensive relative to the per-query work.
+
+### 11.5 v15 (D=64) vs Full DPT Dense (D=64) — Decoder MACs
+
+DPT dense at 416×544 (to stride 2, 4 refinenets + projections) = **3,219M** (K-independent).
+
+**Break-even at K ≈ 402** (241 + 7.4K = 3,219 → K = 2,978 / 7.4 = **402**). At 7.4M/query, v15 inference is faster than full DPT dense for all K ≤ 402 — covering every practical inference scenario.
+
+| K | v15 decoder (7.4M/query) | DPT dense decoder (D=64) | **Decoder speedup** |
+|---:|---:|---:|---:|
+| 16 | 241+118 = **359M** | 3,219M | **9.0×** |
+| 32 | 241+237 = **478M** | 3,219M | **6.7×** |
+| 64 | 241+474 = **715M** | 3,219M | **4.5×** |
+| 100 | 241+740 = **981M** | 3,219M | **3.3×** |
+| 128 | 241+947 = **1,188M** | 3,219M | **2.7×** |
+| 256 | 241+1,894 = **2,135M** | 3,219M | **1.5×** |
+| **402** | 241+2,975 = **3,216M** | 3,219M | **≈1×** |
+
+**Structural comparison — training path (both D=64, padded conv):**
+
+| Processing step | DPT dense (D=64) | v15 (D=64) training | Same? |
+|---|---|---|---|
+| Conv1×1 projections L4/L3/L2 | ✓ | ✓ | **identical** |
+| refinenet4 (L4 → stride 16) | FeatureFusionBlock RCU2 | **identical** | **identical** |
+| refinenet3 (stride 16+L3 → stride 8) | FeatureFusionBlock RCU1+RCU2 | **identical** | **identical** |
+| stride 8 → stride 4 | refinenet2: RCU1+RCU2 (**578M**) | s8 padded conv ×2 + merge with L1 (**262M+87M**) | **different** — v15 uses s8 branch + L1 merge instead of refinenet2 |
+| stride 4 → stride 2 | refinenet1 RCU1 (**1,041M**) | conv_m1+m2 padded (**1,048M**) → bilinear | **same cost**, different structure |
+| stride 2 → stride 1 | refinenet1 RCU2+out (**1,041M**) | conv_u1+u2+f padded (**4,196M+4,196M**) | **more expensive** in v15 (going fully to stride 1) |
+| Final prediction | Dense Conv3×3 | Dense Conv1×1(32→1) | **simpler** in v15 |
+
+**Key structural difference:** DPT's refinenet2 fuses stride_8_map+L2 globally. v15's s8 branch processes stride_8_map alone, then merges with L1 directly — skipping L2 completely, using L1 for fine detail. The s8 branch at stride 8 then upsamples ×2 to stride 4 to merge with L1, equivalent in spirit to refinenet2 but with explicit L1 injection.
