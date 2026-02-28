@@ -9,7 +9,7 @@ def l_silog(pred_depth, gt_depth, lam_var=0.50):
     return loss
 
 
-def l_dense_silog(pred_depth, gt_depth, lam_var=0.50):
+def l_dense_silog(pred_depth, gt_depth, lam_var=0.85):
     mask = (gt_depth > 0).squeeze(1)  # [B, H, W]
     d = torch.log(pred_depth.squeeze(1) + eps) - torch.log(gt_depth.squeeze(1) + eps)  # [B, 1, H, W]
     d = d * mask  # Zero out invalid pixels

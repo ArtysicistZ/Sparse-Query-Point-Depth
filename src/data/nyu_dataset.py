@@ -23,7 +23,7 @@ class NYUDataset(Dataset):
         self.K = K
         self.is_train = split == "train"
         hf_split = "train" if split == "train" else "validation"
-        self.nyu_data = load_dataset("sayakpaul/nyu_depth_v2", split=hf_split, revision="refs/convert/parquet")
+        self.nyu_data = load_dataset("sayakpaul/nyu_depth_v2", split=hf_split)
 
     def __len__(self):
         return len(self.nyu_data)
@@ -67,6 +67,7 @@ class NYUDataset(Dataset):
             image = image * colors[np.newaxis, np.newaxis, :]
 
             image = np.clip(image, 0.0, 1.0)
+
         else:
             # --- Validation: resize to target resolution ---
             image = image.resize((W, H), resample=Image.BILINEAR)
@@ -87,9 +88,13 @@ class NYUDataset(Dataset):
         qx = valid_x[indices]
         qy = valid_y[indices]
 
+        depth_map = torch.from_numpy(depth).unsqueeze(0)  # [1, H, W]
+
+        if self.is_train:
+            return image, depth_map
+
         query_coords = torch.tensor(np.stack((qx, qy), axis=-1), dtype=torch.float32)
         gt_depth = torch.tensor(depth[qy, qx], dtype=torch.float32)
-        depth_map = torch.from_numpy(depth).unsqueeze(0)  # [1, H, W]
 
         return image, query_coords, gt_depth, depth_map
 

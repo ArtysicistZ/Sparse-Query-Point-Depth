@@ -12,7 +12,7 @@ def evaluate(model, device, verbose=True):
     Prints full diagnostic report when verbose=True.
     """
     model.eval()
-    val_ds = NYUDataset(split="validation", K=256)
+    val_ds = NYUDataset(split="validation", K=128)
     val_loader = DataLoader(val_ds, batch_size=8, shuffle=False, num_workers=4, pin_memory=True)
 
     all_pred = []
