@@ -23,7 +23,7 @@ class NYUDataset(Dataset):
         self.K = K
         self.is_train = split == "train"
         hf_split = "train" if split == "train" else "validation"
-        self.nyu_data = load_dataset("sayakpaul/nyu_depth_v2", split=hf_split)
+        self.nyu_data = load_dataset("sayakpaul/nyu_depth_v2", split=hf_split, trust_remote_code=True)
 
     def __len__(self):
         return len(self.nyu_data)
