@@ -12,7 +12,7 @@ STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 # NYU native resolution
 NYU_H, NYU_W = 480, 640
-MIN_DEPTH, MAX_DEPTH = 1e-3, 10.0
+MIN_DEPTH, MAX_DEPTH = 1e-5, 1000.0
 
 
 class NYUDataset(Dataset):
@@ -81,17 +81,17 @@ class NYUDataset(Dataset):
         depth = np.array(depth).astype(np.float32)
         depth = np.clip(depth, 0.0, MAX_DEPTH)
 
+        depth_map = torch.from_numpy(depth).unsqueeze(0)  # [1, H, W]
+
+        if self.is_train:
+            return image, depth_map
+
         # --- Sample query points from valid pixels ---
         valid_y, valid_x = np.where(depth >= MIN_DEPTH)
         indices = np.random.choice(len(valid_y), self.K, replace=True)
 
         qx = valid_x[indices]
         qy = valid_y[indices]
-
-        depth_map = torch.from_numpy(depth).unsqueeze(0)  # [1, H, W]
-
-        if self.is_train:
-            return image, depth_map
 
         query_coords = torch.tensor(np.stack((qx, qy), axis=-1), dtype=torch.float32)
         gt_depth = torch.tensor(depth[qy, qx], dtype=torch.float32)
@@ -101,13 +101,13 @@ class NYUDataset(Dataset):
 
 if __name__ == "__main__":
     ds = NYUDataset(split="train", K=16)
-    image, coords, gt_depth, depth_map = ds[0]
+    image, depth_map = ds[0]
     print(f"image: {image.shape}, range [{image.min():.2f}, {image.max():.2f}]")
-    print(f"coords: {coords.shape}")
-    print(f"gt_depth: {gt_depth.shape}, range [{gt_depth.min():.2f}, {gt_depth.max():.2f}]")
     print(f"depth_map: {depth_map.shape}, range [{depth_map.min():.2f}, {depth_map.max():.2f}]")
 
     ds_val = NYUDataset(split="validation", K=16)
-    image, coords, gt_depth, depth_map = ds_val[0]
+    image, query_coords, gt_depth, depth_map = ds_val[0]
     print(f"\nVal image: {image.shape}, range [{image.min():.2f}, {image.max():.2f}]")
+    print(f"Val coords: {query_coords.shape}")
+    print(f"Val gt_depth: {gt_depth.shape}, range [{gt_depth.min():.2f}, {gt_depth.max():.2f}]")
     print(f"Val depth_map: {depth_map.shape}, range [{depth_map.min():.2f}, {depth_map.max():.2f}]")

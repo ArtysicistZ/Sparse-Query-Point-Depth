@@ -193,4 +193,22 @@ def evaluate(model, device, verbose=True):
 
         print("=" * 65)
 
-    return abs_rel
+    metrics = {
+        'abs_rel': abs_rel, 'sq_rel': sq_rel, 'rmse': rmse,
+        'rmse_log': rmse_log, 'silog': silog,
+        'd1': d1, 'd2': d2, 'd3': d3,
+        'pred_mean': pred_mean, 'pred_std': pred_std, 'pred_med': pred_med,
+        'gt_mean': gt_mean, 'gt_std': gt_std,
+        'ratio_mean': ratio_mean, 'ratio_med': ratio_med,
+        'pred_cv': pred_cv, 'within_2x': within_2x,
+        'log_depth_mean': ld_mean, 'log_depth_std': ld_std,
+        'intra_std_mean': intra_std_mean, 'intra_std_min': intra_std_min,
+        'optimal_scale': optimal_scale, 'abs_rel_scaled': abs_rel_scaled,
+        'scale_improvement_pct': improvement_pct,
+        'n_nan': n_nan, 'n_inf': n_inf,
+    }
+    for rng, (rel, bd1, n) in bin_results.items():
+        metrics[f'absrel_{rng}'] = rel
+        metrics[f'd1_{rng}'] = bd1
+
+    return metrics
