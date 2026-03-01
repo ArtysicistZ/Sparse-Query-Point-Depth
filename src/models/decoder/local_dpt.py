@@ -45,8 +45,8 @@ class LocalDPT(nn.Module):
         out = self.output_conv1(rn1)
         out = F.interpolate(out, scale_factor=2, mode='bilinear', align_corners=True)
         out = self.output_conv2(out)
-        depth = torch.exp(out)
-        
+        depth = F.relu(out) + 1e-6
+
         depth = F.interpolate(depth, size=(H_IMG, W_IMG), mode='bilinear', align_corners=True)
 
         return depth
@@ -158,6 +158,6 @@ class LocalDPT(nn.Module):
         out = F.relu(out)
         out = F.conv2d(out, self.output_conv2[2].weight, self.output_conv2[2].bias, padding=0)
 
-        depth = torch.exp(out.reshape(B, K))
+        depth = F.relu(out.reshape(B, K)) + 1e-6
 
         return depth
