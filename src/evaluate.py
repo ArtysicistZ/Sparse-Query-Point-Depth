@@ -123,15 +123,6 @@ def evaluate(model, device, verbose=True):
             bin_rel, bin_d1 = float('nan'), float('nan')
         bin_results[f'{lo}-{hi}m'] = (bin_rel, bin_d1, n)
 
-    mask_10 = g >= 10
-    n = mask_10.sum().item()
-    if n > 0:
-        bin_rel = (torch.abs(p[mask_10] - g[mask_10]) / g[mask_10]).mean().item()
-        bin_d1 = (torch.max(p[mask_10] / g[mask_10], g[mask_10] / p[mask_10]) < 1.25).float().mean().item() * 100
-    else:
-        bin_rel, bin_d1 = float('nan'), float('nan')
-    bin_results['10m+'] = (bin_rel, bin_d1, n)
-
     if verbose:
         dm, sm = dense_metrics, sparse_metrics
         print("\n" + "=" * 65)
