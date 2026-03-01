@@ -140,6 +140,7 @@ if __name__ == "__main__":
     print()
 
 
+    '''
     print("=== Phase 1: Training batch size sweep ===")
     model.train()
     bs_results = test_batch_size(model, device)
@@ -149,6 +150,7 @@ if __name__ == "__main__":
         print(f"\n  Best: batch_size={best[0]}  ({best[1]:.1f} img/s, {best[2]:.0f} MB)")
         print(f"  ~{N_DATASET // best[0]} steps/epoch  |  "
               f"~{(N_DATASET // best[0]) * best[3] / 60:.1f} min/epoch")
+    '''
     
 
     print(f"\n=== Phase 2: Inference speed (eval mode) ===")
