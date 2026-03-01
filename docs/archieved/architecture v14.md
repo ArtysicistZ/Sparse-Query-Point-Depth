@@ -71,19 +71,18 @@ Per-query decoder (×K queries in parallel)
   │
   3 × MSDA DecoderLayer:
   │  ├── Multi-Scale Deformable Cross-Attn (h reads V_L1..V_L4 at learned offsets)
-  │  ├── Dual Canvas Read-Write-Smooth (h reads both F_L2 & F_L3, writes back, DWConv smooths each)
+  │  ├── Dual Canvas Write-Smooth-Read (h writes to F_L2 & F_L3, DWConv smooths each, h reads back)
   │  ├── Q2Q Self-Attn (K queries communicate, spatial PE on Q/K)
   │  └── FFN
   │
   B3b:  2 × [L4 cross-attn + Dual Canvas + Q2Q + FFN]    [global semantic]
   │
-  Final canvas read: h_final = h + W_final · [bilinear(F_L2⁵, pos); bilinear(F_L3⁵, pos)]
-  Depth head: MLP(h_final) × exp(s) → log_depth → exp → depth
+  Depth head: MLP(h) × exp(s) → log_depth → exp → depth
 ```
 
 At 256×320: N_L4 = 80. At 480×640: N_L4 = 300.
 
-Core dimension $d = 192$. Encoder channels: [96, 192, 384, 768]. Neck projects all levels to uniform $d = 192$. ConvNeXt V2 blocks already provide extensive local spatial mixing (DW Conv k7 stacked 3–9× per stage). 2× L4 self-attention layers at $d = 192$ for global context (L3 self-attention removed — ConvNeXt Stage 3's 9× DW k7 provides sufficient spatial mixing). MSDA: 6 heads, 4 levels, 4 points per head per level = 96 sampling points per query per layer. Multi-scale seed: all 4 neck levels (each $d$-dim) sampled at query center → 800-d → project to d. MSDA value maps are identity (all levels already $d$-dim). Dual Spatial Canvas: two dense $d$-dim maps at L2 (stride 8, DWConv5×5 smooth) and L3 (stride 16, DWConv3×3 smooth) resolutions, initialized from $L_2$ and $L_3$ respectively, updated via scatter-gather-smooth at every decoder layer — provides DPT-like multi-resolution neighborhood context. All 5 decoder layers (3 MSDA + 2 B3b) use the same 4-sublayer pattern: cross-attn → dual canvas read-write-smooth → Q2Q self-attn → FFN.
+Core dimension $d = 192$. Encoder channels: [96, 192, 384, 768]. Neck projects all levels to uniform $d = 192$. ConvNeXt V2 blocks already provide extensive local spatial mixing (DW Conv k7 stacked 3–9× per stage). 2× L4 self-attention layers at $d = 192$ for global context (L3 self-attention removed — ConvNeXt Stage 3's 9× DW k7 provides sufficient spatial mixing). MSDA: 6 heads, 4 levels, 4 points per head per level = 96 sampling points per query per layer. Multi-scale seed: all 4 neck levels (each $d$-dim) sampled at query center → 800-d → project to d. MSDA value maps are identity (all levels already $d$-dim). Dual Spatial Canvas: two dense $d$-dim maps at L2 (stride 8, DWConv5×5 smooth) and L3 (stride 16, DWConv3×3 smooth) resolutions, initialized from $L_2$ and $L_3$ respectively, updated via scatter-gather-smooth at every decoder layer — provides DPT-like multi-resolution neighborhood context. All 5 decoder layers (3 MSDA + 2 B3b) use the same 4-sublayer pattern: cross-attn → dual canvas write-smooth-read → Q2Q self-attn → FFN.
 
 ---
 
@@ -251,9 +250,7 @@ All steps batched over $K$ queries in parallel. Coordinate convention: `F.grid_s
 | $h^{(n)}$ | Query representation after MSDA layer $n$ | $d$ |
 | $h^{(3b)}$ | Output after B3b (global-aware) | $d$ |
 | $F_{L2}^{(n)}, F_{L3}^{(n)}$ | Dual Spatial Canvas after decoder layer $n$ (Section 6.5). $F_{L2}^{(0)} = V_{L2}$, $F_{L3}^{(0)} = L_3$ | $d \times H_{c\ell} \times W_{c\ell}$ |
-| $r_q^{(n)}$ | Dual canvas read: $[\text{bilinear}(F_{L2}^{(n-1)}, p_q^{(L2)});\; \text{bilinear}(F_{L3}^{(n-1)}, p_q^{(L3)})]$ | $2d$ |
-| $h_{\text{final}}$ | $h^{(3b)} + W_{\text{final}} \cdot r_q^{(5)}$ — dual canvas-enhanced final repr. | $d$ |
-| $\hat{d}_q$ | Predicted depth: $\exp(\text{MLP}(h_{\text{final}}) \cdot \exp(s))$ | scalar |
+| $\hat{d}_q$ | Predicted depth: $\exp(\text{MLP}(h^{(3b)}) \cdot \exp(s))$ | scalar |
 
 ### 6.1 B1: Multi-Scale Query Seed [REDESIGNED in v14]
 
@@ -343,12 +340,12 @@ Each MSDA decoder layer $n = 1, 2, 3$:
 
 ```
 h ──→ LN ──→ MSDA Cross-Attn (96 deformable samples from V_L1..V_L4) ──→ +residual
-  ──→ LN ──→ Dual Canvas Read-Write-Smooth (read F_L2 & F_L3, fuse, scatter h to both, DWConv smooths each) ──→ +residual
+  ──→ LN ──→ Dual Canvas Write-Smooth-Read (scatter h to both F_L2 & F_L3, DWConv smooths each, read & fuse) ──→ +residual
   ──→ LN ──→ Q2Q Self-Attn (K queries attend to each other, spatial PE on Q/K) ──→ +residual
   ──→ LN ──→ FFN (192 → 768 → 192, GELU) ──→ +residual ──→ h_out
 ```
 
-Dual canvas interaction (Section 6.5) is inserted between cross-attention and Q2Q. After MSDA reads from static value maps, the dual canvas provides complementary information at two resolutions: what nearby queries have decoded so far (L2 for fine edges, L3 for broad neighborhood). Q2Q then reconciles local canvas context with global inter-query consistency.
+Dual canvas interaction (Section 6.5) is inserted between cross-attention and Q2Q. After MSDA reads from static value maps, the canvas writes the updated h, smooths via DWConv, then reads back — providing complementary information at two resolutions: what nearby queries have decoded so far (L2 for fine edges, L3 for broad neighborhood). Q2Q then reconciles local canvas context with global inter-query consistency.
 
 **Q2Q self-attention** (inter-query communication):
 
@@ -370,13 +367,14 @@ Spatial PE $\text{pos}_q = W_{\text{pos}} \, \text{pe}_q$ added to Q and K only 
 | $W_O$ (MSDA output): $d \to d$ | ~37K |
 | LN (cross) | ~0.4K |
 | Dual Canvas: $W_{\text{read}}^{(n)}$ ($2d \to d$) + $W_{\text{gate}}^{(n)}$ ($d \to 1$) + LN | ~74K |
+| Dual Canvas: $W_{\text{write\_L2}}^{(n)}$ ($d \to d$) + $W_{\text{write\_L3}}^{(n)}$ ($d \to d$) | ~74K |
 | Q2Q $W_Q, W_K, W_V, W_O$: $4 \times d^2$ | ~148K |
 | LN (Q2Q) | ~0.4K |
 | FFN: $d \to 4d \to d$ | ~296K |
 | LN (FFN) | ~0.4K |
-| **Per layer total** | **~611K** |
+| **Per layer total** | **~685K** |
 
-**3 layers total:** ~1,833K. Plus shared $W_{\text{pos}}$ (~6K) from B1. Dual canvas shared params ($W_{\text{write}}$, DWConv5×5 L2, DWConv3×3 L3, $W_{\text{final}}$) counted in Section 6.5.5.
+**3 layers total:** ~2,055K. Plus shared $W_{\text{pos}}$ (~6K) from B1. Dual canvas per-layer DWConv smooth counted in Section 6.5.5.
 
 ---
 
@@ -395,20 +393,20 @@ Spatial PE $\text{pos}_q = W_{\text{pos}} \, \text{pe}_q$ added to Q and K only 
 
 ```
 h ──→ LN ──→ Cross-Attn (Q=h, KV=pre-computed L4 KV, all N_L4 tokens) ──→ +residual
-  ──→ LN ──→ Dual Canvas Read-Write-Smooth (Section 6.5) ──→ +residual
+  ──→ LN ──→ Dual Canvas Write-Smooth-Read (Section 6.5) ──→ +residual
   ──→ LN ──→ Q2Q Self-Attn (K queries communicate, shared spatial PE) ──→ +residual
   ──→ LN ──→ FFN (192 → 768 → 192, GELU) ──→ +residual ──→ h_out
 ```
 
-Uses pre-computed KV from Section 5.2 (per-layer $K_{\text{L4}}^{(\ell)}, V_{\text{L4}}^{(\ell)}$). Same 4-sublayer pattern as MSDA layers: cross-attn → dual canvas → Q2Q → FFN.
+Uses pre-computed KV from Section 5.2 (per-layer $K_{\text{L4}}^{(\ell)}, V_{\text{L4}}^{(\ell)}$). Same 4-sublayer pattern as MSDA layers: cross-attn → dual canvas write-smooth-read → Q2Q → FFN.
 
 6 heads, $d_{\text{head}} = 32$. Per-query cost is only Q projection + attention + FFN (KV pre-computed).
 
-**Output:** $h^{(3b)} \in \mathbb{R}^d$ — the final query representation, fed to the depth head.
+**Output:** $h^{(3b)} \in \mathbb{R}^d$ — the final query representation (already includes final canvas read from the last layer's write-smooth-read), fed directly to the depth head.
 
 > **Routing removed in v14:** In v13.1, B3b extracted top-20 L4 routing indices for B5's routed tokens. With B5 removed, routing has no consumer. B3b now purely enriches h via full global attention.
 
-**B3b params:** 2× ($W_Q/W_O$ cross-attn ~74K + dual canvas $W_{\text{read}}/W_{\text{gate}}$/LN ~74K + Q2Q $W_Q/W_K/W_V/W_O$ ~148K + FFN ~296K + LNs ~1K) = **~1,186K** (KV counted in pre-compute, dual canvas shared params in Section 6.5.5).
+**B3b params:** 2× ($W_Q/W_O$ cross-attn ~74K + dual canvas $W_{\text{read}}/W_{\text{gate}}$/LN ~74K + dual canvas $W_{\text{write\_L2}}/W_{\text{write\_L3}}$ ~74K + Q2Q $W_Q/W_K/W_V/W_O$ ~148K + FFN ~296K + LNs ~1K) = **~1,334K** (KV counted in pre-compute, dual canvas per-layer DWConv smooth in Section 6.5.5).
 
 ### 6.5 Dual Spatial Canvas: Evolving Dense-Local Context [NEW in v14]
 
@@ -456,35 +454,40 @@ The canvas interaction is inserted as a sublayer between cross-attention and Q2Q
 
 ```
 Step 1: LN → Cross-Attn → +residual                          (existing)
-Step 2: LN → Dual Canvas Read-Write-Smooth → +residual        [NEW]
+Step 2: LN → Dual Canvas Write-Smooth-Read → +residual        [NEW]
 Step 3: LN → Q2Q Self-Attn → +residual                        (existing)
 Step 4: LN → FFN → +residual                                  (existing)
 ```
 
-**Step 2 detail — Dual Canvas Read-Write-Smooth:**
+**Step 2 detail — Dual Canvas Write-Smooth-Read:**
 
 ```
-Canvas Read (both levels):
-  r_q_L2 = bilinear(F_L2^(n-1), p_q^(L2))       ∈ R^d     ← fine neighborhood (8px spacing)
-  r_q_L3 = bilinear(F_L3^(n-1), p_q^(L3))       ∈ R^d     ← broad neighborhood (16px spacing)
+Canvas Write (scatter, per-layer W_write, separate per canvas):
+  w_q_L2 = W_write_L2^(n) · h                     ∈ R^d     ← per-layer, per-canvas projection
+  w_q_L3 = W_write_L3^(n) · h                     ∈ R^d     ← per-layer, per-canvas projection
+  F_L2^(n) = scatter_add(F_L2^(n-1), p_q^(L2), w_q_L2)     ← write to fine canvas
+  F_L3^(n) = scatter_add(F_L3^(n-1), p_q^(L3), w_q_L3)     ← write to coarse canvas
+
+Canvas Smooth (per-layer, independent per level):
+  F_L2^(n) ← F_L2^(n) + DWConv5×5_L2^(n)(GELU(DWConv5×5_L2^(n)(F_L2^(n))))    ← 5×5 for sparser L2, per-layer
+  F_L3^(n) ← F_L3^(n) + DWConv3×3_L3^(n)(GELU(DWConv3×3_L3^(n)(F_L3^(n))))    ← 3×3 for denser L3, per-layer
+
+Canvas Read (both levels, from freshly smoothed state):
+  r_q_L2 = bilinear(F_L2^(n), p_q^(L2))           ∈ R^d     ← fine neighborhood (8px spacing)
+  r_q_L3 = bilinear(F_L3^(n), p_q^(L3))           ∈ R^d     ← broad neighborhood (16px spacing)
 
 Gated Fusion (concatenate both reads, single projection):
-  gate_q = sigmoid(W_gate^(n) · h)                ∈ R^1     ← per-query relevance gate
+  gate_q = sigmoid(W_gate^(n) · LN(h))             ∈ R^1     ← per-query relevance gate
   h ← h + gate_q · (W_read^(n) · [r_q_L2; r_q_L3])          ← W_read: 2d → d
-
-Canvas Write (scatter to both):
-  w_q = W_write · h                               ∈ R^d     ← shared projection to canvas space
-  F_L2^(n) = scatter_add(F_L2^(n-1), p_q^(L2), w_q)         ← write to fine canvas
-  F_L3^(n) = scatter_add(F_L3^(n-1), p_q^(L3), w_q)         ← write to coarse canvas
-
-Canvas Smooth (independent per level, different kernel sizes):
-  F_L2^(n) ← F_L2^(n) + DWConv5×5_L2(GELU(DWConv5×5_L2(F_L2^(n))))    ← 5×5 for sparser L2
-  F_L3^(n) ← F_L3^(n) + DWConv3×3_L3(GELU(DWConv3×3_L3(F_L3^(n))))    ← 3×3 for denser L3
 ```
+
+> **Why write-smooth-read (not read-write-smooth):** With write first, the read at the end of each layer sees the *current* layer's writes after smoothing — including the effect of THIS layer's cross-attention. Read-first would read stale canvas state (from the previous layer's smooth) and require a separate final canvas read in the depth head to capture the last smoothed state. Write-smooth-read makes the last layer's canvas read the natural final output, eliminating the need for an extra $W_{\text{final}}$ (−74K params).
 
 **Why concatenate-then-project (not separate additions):** $W_{\text{read}}^{(n)} \cdot [r_{L2}; r_{L3}]$ lets the model learn arbitrary linear combinations of the two canvas reads. At depth edges, it can emphasize L2 (finer resolution for edge-side disambiguation). On flat surfaces, it can emphasize L3 (broader, denser coverage). Separate additions would constrain the two reads to contribute independently.
 
-**Why shared W_write:** The write projects the query's decoded representation $h$ into canvas space. This mapping is about "what information to store," not "at what resolution" — the same representation is stored at both L2 and L3, allowing downstream smooth to propagate it at both scales.
+**Why per-layer, per-canvas W_write:** Each decoder layer writes semantically different information (layer 1 writes seed-level features, layer 5 writes globally-informed features). Separate $W_{\text{write\_L2}}^{(n)}$ and $W_{\text{write\_L3}}^{(n)}$ let each layer decide independently what to store at each resolution — L2 may emphasize edge-relevant features while L3 emphasizes surface-region features. Cost: +37K per additional W_write per layer (5 layers × 2 canvases × 37K = 370K total, vs 37K shared).
+
+**Why per-layer DWConv smooth (not shared):** The SPN literature evolved from shared propagation kernels (CSPN, NLSPN — same affinity iterated) to per-iteration adaptive kernels (DySPN, AAAI 2022). DySPN demonstrated that per-iteration affinity is strictly better in accuracy and convergence speed — fixed kernels limit representational power. In our architecture, the canvas content changes dramatically across layers: layer 1 receives sparse seed-level scatter writes (noisy, low coverage), while layer 5 receives globally-informed B3b outputs (refined, prediction-ready). Early layers benefit from more aggressive smoothing to fill coverage gaps (especially L2 at 5–20% direct writes), while later layers need conservative smoothing to preserve refined depth boundaries. Per-layer DWConv lets each layer learn its own optimal propagation pattern. Cost: +55K vs shared (69K total, vs 13.8K shared) — 0.17% of model, negligible.
 
 **Why different kernel sizes per canvas:** L2 (stride 8) has sparser scatter coverage (20%/5.3%) and needs faster propagation — DWConv5×5 covers 40×40px, reaching average inter-query distance in ~1 step. L3 (stride 16) has denser coverage (80%/21%) and needs precision — DWConv3×3 covers 48×48px, already substantial at stride 16. Larger L3 kernels would cause the "mixed-depth problem" (NLSPN, DySPN): a 7×7 at stride 16 covers 112×112px, mixing features across depth boundaries. This asymmetric design follows CSPN++ findings that different regions benefit from different kernel sizes.
 
@@ -495,31 +498,17 @@ Canvas Smooth (independent per level, different kernel sizes):
 - L3 canvas (DWConv3×3): 21×21 at stride 16 = 336×336px — covers broad neighborhood around each query
 
 **Why the canvas is truly evolving (not static):**
-1. Layer 1: $h \approx$ seed → canvases get seed-level representations → DWConv smooths coarse patterns
-2. Layer 3: $h$ has multi-scale MSDA context → canvases get richer representations
-3. Layer 4–5: $h$ has global L4 context from B3b → canvases get final prediction-ready representations
-4. Depth head: reads from fully-evolved canvases → multi-resolution neighborhood-informed prediction
+1. Layer 1: $h \approx$ seed → canvases get seed-level representations → DWConv smooths coarse patterns → read back gives h local context
+2. Layer 3: $h$ has multi-scale MSDA context → canvases get richer representations → read back incorporates neighborhood's decoded state
+3. Layer 4–5: $h$ has global L4 context from B3b → canvases get final prediction-ready representations → read back gives h the fully-evolved multi-resolution neighborhood
 
-Each layer reads a DIFFERENT canvas state (because prior layers scattered and smoothed). Analogous to how DPT's Conv3×3 receives different input features at each fusion stage.
+Each layer writes, smooths, then reads — so each read sees the freshly-updated canvas including the current layer's contribution. Analogous to how DPT's Conv3×3 receives different input features at each fusion stage.
 
 **Why gate is important:** A query on a depth edge should NOT be smoothed toward the wrong side. The gate $\text{sigmoid}(W_{\text{gate}}^{(n)} \cdot h)$ allows the model to learn: "when $h$ indicates I'm on a depth discontinuity, gate down the canvas contribution." The L2 canvas's finer resolution means the gate needs to be less aggressive — L2 can resolve which side of the edge the query is on — but the gate still protects against cross-boundary contamination at sub-stride distances.
 
-#### 6.5.3 Final Canvas Read (before depth head)
+#### ~~6.5.3 Final Canvas Read (before depth head)~~ (REMOVED)
 
-After the last B3b layer writes to and smooths both canvases, one final dual read feeds into the depth head:
-
-$$h_{\text{final}} = h^{(3b)} + W_{\text{final}} \cdot [\text{bilinear}(F_{L2}^{(5)},\; p_q^{(L2)});\; \text{bilinear}(F_{L3}^{(5)},\; p_q^{(L3)})]$$
-
-$$\hat{d}_q = \text{depth\_head}(h_{\text{final}})$$
-
-$W_{\text{final}} \in \mathbb{R}^{d \times 2d}$ projects the concatenated dual canvas read to $d$-dim, same structure as the per-layer $W_{\text{read}}$.
-
-This final read is the SPD analog of DPT's final Conv3×3 output head. The depth prediction now incorporates:
-- $h^{(3b)}$: the query's own decoded representation (multi-scale + global context)
-- $F_{L2}^{(5)}$ at $p_q$: fine-grained evolved neighborhood (8px spacing, sharp edge info)
-- $F_{L3}^{(5)}$ at $p_q$: broad evolved neighborhood (16px spacing, surface-level smoothness)
-
-Without the canvas, $h^{(3b)}$ is an isolated prediction. With the dual canvas, it's a **multi-resolution neighborhood-informed** prediction.
+> **Removed.** With write-smooth-read ordering, the last decoder layer's canvas read already fuses the final smoothed canvas state into $h^{(3b)}$ via gated fusion. The depth head receives $h^{(3b)}$ which already contains multi-resolution neighborhood information from the last canvas read. A separate $W_{\text{final}}$ (74K) would re-read the same canvas state — redundant. Under the original read-write-smooth ordering this was necessary because the last layer's smooth was never read back; with write-smooth-read it is not.
 
 #### 6.5.4 Interaction with Q2Q and MSDA
 
@@ -544,13 +533,14 @@ Together, they give each query exactly what DPT gives each pixel: multi-resoluti
 | $W_{\text{read}}^{(n)}$: $2d \to d$, 5 layers | 5 × 73,728 = **369K** | Per-layer (concatenated L2+L3 reads → h) |
 | $W_{\text{gate}}^{(n)}$: $d \to 1$, 5 layers | 5 × 193 = **1.0K** | Per-layer scalar gate |
 | LN (canvas), 5 layers | 5 × 384 = **1.9K** | Per-layer LayerNorm |
-| $W_{\text{write}}$: $d \to d$, shared | **37K** | Shared across layers, scattered to both canvases |
-| 2× DWConv5×5 ($d$ ch), L2 smooth, shared | **10K** | L2 canvas smooth (5×5 for sparser coverage) |
-| 2× DWConv3×3 ($d$ ch), L3 smooth, shared | **3.8K** | L3 canvas smooth (3×3 to preserve boundaries) |
-| $W_{\text{final}}$: $2d \to d$ | **74K** | Final dual read before depth head |
-| **Total** | **~497K** | ~15% of decoder, ~1.4% of total model |
+| $W_{\text{write\_L2}}^{(n)}$: $d \to d$, 5 layers | 5 × 36,864 = **184K** | Per-layer, writes to L2 canvas |
+| $W_{\text{write\_L3}}^{(n)}$: $d \to d$, 5 layers | 5 × 36,864 = **184K** | Per-layer, writes to L3 canvas |
+| 2× DWConv5×5 ($d$ ch), L2 smooth, 5 layers | 5 × 9,984 = **50K** | Per-layer L2 canvas smooth (5×5 for sparser coverage) |
+| 2× DWConv3×3 ($d$ ch), L3 smooth, 5 layers | 5 × 3,840 = **19K** | Per-layer L3 canvas smooth (3×3 to preserve boundaries) |
+| ~~$W_{\text{final}}$: $2d \to d$~~ | ~~74K~~ | Removed — write-smooth-read makes last layer's read the final output |
+| **Total** | **~809K** | ~23% of decoder, ~2.4% of total model |
 
-**Compute per layer:** Dual canvas read (2× bilinear gather, $2 \times K \times d$) + gated fusion ($K \times 2d \times d \approx 19$M) + write projection ($K \times d^2 \approx 9.4$M) + L2 DWConv5×5 smooth ($2 \times 25 \times d \times H_{c2} \times W_{c2} \approx 12$M at 256×320) + L3 DWConv3×3 smooth ($\approx 0.6$M). 5 layers + final read: ~210M MACs total — **2.3% of encoder MACs**.
+**Compute per layer:** Write projection ($2 \times K \times d^2 \approx 19$M) + L2 DWConv5×5 smooth ($2 \times 25 \times d \times H_{c2} \times W_{c2} \approx 12$M at 256×320) + L3 DWConv3×3 smooth ($\approx 0.6$M) + dual canvas read (2× bilinear gather, $2 \times K \times d$) + gated fusion ($K \times 2d \times d \approx 19$M). 5 layers: ~200M MACs total — **2.2% of encoder MACs**.
 
 **VRAM:** L2 canvas $32 \times 40 \times 192 = 245$K values (~480KB in bf16) + L3 canvas $16 \times 20 \times 192 = 61$K values (~120KB). Total ~600KB at 256×320. At 480×640: L2 $60 \times 80 \times 192 = 922$K (~1.8MB) + L3 ~460KB = ~2.3MB. Still negligible vs 8GB VRAM.
 
@@ -565,25 +555,23 @@ Together, they give each query exactly what DPT gives each pixel: multi-resoluti
 | No inter-query spatial consistency | Canvas + DWConv provides LOCAL consistency (complementing Q2Q's GLOBAL consistency) |
 
 **Residual chain (v14 with dual canvas):**
-$$h^{(0)} \xrightarrow[\text{cross + dual canvas + Q2Q + FFN}]{\text{3× MSDA}} h^{(3)} \xrightarrow[\text{cross + dual canvas + Q2Q + FFN}]{\text{B3b: 2L, L4}} h^{(3b)} \xrightarrow[\text{+ dual canvas final read}]{} h_{\text{final}} \to \hat{d}_q$$
+$$h^{(0)} \xrightarrow[\text{cross + dual canvas + Q2Q + FFN}]{\text{3× MSDA}} h^{(3)} \xrightarrow[\text{cross + dual canvas + Q2Q + FFN}]{\text{B3b: 2L, L4}} h^{(3b)} \to \hat{d}_q$$
 
-Every stage uses the same 4-sublayer pattern: **cross-attn → dual canvas → Q2Q → FFN**. Total: 5 cross-attn + 5 dual canvas + 5 Q2Q + 5 FFN = **20 sublayers**.
+Every stage uses the same 4-sublayer pattern: **cross-attn → dual canvas write-smooth-read → Q2Q → FFN**. Total: 5 cross-attn + 5 dual canvas + 5 Q2Q + 5 FFN = **20 sublayers**. The last layer's canvas read is the natural final fusion — no separate final read needed.
 
 ### 6.6 Depth Head [standalone in v14]
 
-**Final dual canvas read** (Section 6.5.3) — incorporates multi-resolution spatially-smoothed neighborhood:
-$$h_{\text{final}} = h^{(3b)} + W_{\text{final}} \cdot [\text{bilinear}(F_{L2}^{(5)},\; p_q^{(L2)});\; \text{bilinear}(F_{L3}^{(5)},\; p_q^{(L3)})]$$
+**Input:** $h^{(3b)}$ — already contains final canvas state from the last decoder layer's write-smooth-read.
 
 **Depth prediction:**
-$$\text{raw} = W_{r2} \cdot \text{GELU}(W_{r1} \, h_{\text{final}} + b_{r1}) + b_{r2} \quad (192 \to 384 \to 1)$$
-$$\text{log\_depth} = \text{raw} \cdot \exp(s), \quad s = \text{nn.Parameter}(\mathbf{0})$$
-$$\hat{d}_q = \exp(\text{log\_depth})$$
+$$\text{raw} = W_{r2} \cdot \text{GELU}(W_{r1} \, h^{(3b)} + b_{r1}) + b_{r2} \quad (192 \to 384 \to 1)$$
+$$\hat{d}_q = \exp(\text{raw} \cdot \exp(s)), \quad s = \text{nn.Parameter}(\mathbf{0})$$
 
-**Learnable output scale:** Exp 7 showed the MLP output capped at ~1.55 across all val images (pred max stuck at 4.73m, log(10m) = 2.30 needed). A single learnable scalar $s$ (initialized to 0, so $\exp(s) = 1.0$ at init) lets the optimizer expand the output range. When $s$ reaches ~0.4 ($\exp = 1.5$), the range expands from $[-0.5, 1.55]$ to $[-0.75, 2.33]$ — covering the full NYU [0.7m, 10m] range.
+**Learnable output scale:** Exp 7 showed the MLP output capped at ~1.55 across all val images (pred max stuck at 4.73m, log(10m) = 2.30 needed). A single learnable scalar $s$ (initialized to 0) lets the optimizer expand the output range. When $s \approx 0.4$, the range expands to cover the full NYU [0.7m, 10m] range.
 
 **Bias initialization:** $b_{r2}$ initialized to $\ln(2.5) \approx 0.916$, centering initial predictions at ~2.5m (NYU median).
 
-**Depth head params:** MLP ~74K + scale ~0.001K = **~74K**.
+**Depth head params:** MLP ~74K + scale ~0.001K = **~74K**. (No $W_{\text{final}}$ — canvas read is inside the last decoder layer.)
 
 ---
 
@@ -601,29 +589,24 @@ $$\hat{d}_q = \exp(\text{log\_depth})$$
 
 ### 7.2 Loss Functions (v14)
 
-$$\mathcal{L} = L_{\text{silog}} + \lambda_{\text{aux}} \, L_{\text{dense\_aux}}$$
+$$\mathcal{L} = L_{\text{silog}}(\hat{d}_q, d_q^*) + \lambda_{\text{canvas}}\!\left[L_{\text{silog}}(\hat{D}_{L2}, D^*_{\downarrow 8}) + L_{\text{silog}}(\hat{D}_{L3}, D^*_{\downarrow 16}) + L_{\text{silog}}(\hat{D}_{L4}, D^*_{\downarrow 32})\right]$$
 
-**Scale-invariant log loss (SILog) — primary, on K sparse query points:**
-$$L_{\text{silog}} = \sqrt{\frac{1}{K} \sum_q \delta_q^2 - \lambda_{\text{var}} \left(\frac{1}{K} \sum_q \delta_q\right)^2}, \quad \delta_q = \log \hat{d}_q - \log d_q^*$$
+**Primary — Sparse SILog on K query predictions:**
+$$L_{\text{silog}}(\hat{d}_q, d_q^*) = \sqrt{\frac{1}{K} \sum_q \delta_q^2 - \lambda_{\text{var}} \left(\frac{1}{K} \sum_q \delta_q\right)^2}, \quad \delta_q = \log \hat{d}_q - \log d_q^*$$
 
-$\lambda_{\text{var}} = 0.15$ (per-image computation). Computed per image, then averaged across batch.
+$\lambda_{\text{var}} = 0.50$. Per-image computation, averaged across batch.
 
-> **v14 change from v13.1:** $\lambda_{\text{var}}$ lowered from 0.5 to 0.15 (AdaBins value). Exp 6 showed $\lambda = 0.5$ forgives too much scale error → 5× slower learning. Exp 7 with $\lambda = 0.15$ fixed scale learning (s* 1.38→1.17 in one epoch). Per-image computation (not global batch mean) is correct — prevents cross-image scale cancellation.
+> **Per-image (not global batch mean):** prevents cross-image scale cancellation. $\lambda_{\text{var}} = 0.50$ (Exp 9, BTS setting); was 0.15 in earlier experiments.
 
-**Dense auxiliary loss [NEW in v14] — on full-resolution encoder features:**
+**Canvas auxiliary loss (training only) — deep supervision on canvas features:**
+$$\hat{D}_{L2} = \exp\!\left(\text{Conv}_{1\times1}^{L2}(\text{canvas}_{\text{L2}})\right) \in \mathbb{R}^{H/8 \times W/8}$$
+$$\hat{D}_{L3} = \exp\!\left(\text{Conv}_{1\times1}^{L3}(\text{canvas}_{\text{L3}})\right) \in \mathbb{R}^{H/16 \times W/16}, \quad \hat{D}_{L4} = \exp\!\left(\text{Conv}_{1\times1}^{L4}(\text{canvas}_{\text{L4}})\right) \in \mathbb{R}^{H/32 \times W/32}$$
 
-$$L_{\text{dense\_aux}} = L_{\text{silog}}^{L2}(\hat{D}_{L2},\; D^*_{\downarrow 8}) + L_{\text{silog}}^{L3}(\hat{D}_{L3},\; D^*_{\downarrow 16})$$
+$D^*_{\downarrow s}$: GT depth bilinear-downsampled to stride $s$, masked where GT > 0. $\lambda_{\text{canvas}} = 0.5$. Canvas heads discarded at inference — zero cost at test time.
 
-where:
-$$\hat{D}_{L2} = \exp(\text{Conv}_{1\times1}^{L2}(L_2)) \in \mathbb{R}^{H/8 \times W/8}, \quad \hat{D}_{L3} = \exp(\text{Conv}_{1\times1}^{L3}(L_3)) \in \mathbb{R}^{H/16 \times W/16}$$
+**Why canvas aux improves sparse predictions:** The K=256 query head reads from the canvas via $W_{\text{read}}$ at every decoder layer. If the canvas encodes correct depth values, each query receives better spatial context → better $h$ → better $\hat{d}_q$. Canvas aux loss directly supervises the canvas features to encode depth, transforming the smooth operators from passive diffusers into actively-supervised spatial reasoners. Unwritten cells (93% of L2) only evolve through DWConv smooth — canvas aux provides a depth target for every cell, forcing propagation to be correct.
 
-$D^*_{\downarrow s}$: GT depth bilinear-downsampled to stride $s$, masked where GT > 0. $\lambda_{\text{aux}} = 0.5$.
-
-**Why dense aux is critical:** The encoder (28.6M params) currently receives gradient through only K=256 query points — most spatial positions in L1/L2 get zero gradient per batch. Dense aux heads provide direct gradient to ALL spatial positions in L2 (32×40 = 1,280 positions) and L3 (16×20 = 320 positions) every batch. This forces the encoder to learn depth-aware features everywhere, not just where queries happen to land.
-
-**Precedent:** DETR uses auxiliary prediction heads at every intermediate decoder layer to improve gradient flow. Multi-task auxiliary losses are standard in dense prediction (Mask2Former, UPerNet). The dense aux heads are discarded at inference — zero cost at test time.
-
-**Dense aux params:** Conv2d(192→1) = 193 params + Conv2d(192→1) = 193 params = **~386 params** total. Negligible.
+**Canvas aux params:** 3 × Conv2d(192→1) = **579 params** (training-only).
 
 ### 7.3 Training Setup
 
@@ -640,7 +623,7 @@ $D^*_{\downarrow s}$: GT depth bilinear-downsampled to stride $s$, masked where 
 | Gradient clipping | 1.0 |
 | Attention dropout | 0.1 (MSDA Q2Q, B3b, L4 self-attn) |
 | Encoder | ConvNeXt V2-T, fine-tuned with 0.1× LR |
-| Trainable | All (~33.3M: encoder 28.6M + neck/self-attn 1.2M + precompute 0.1M + decoder+dual canvas 3.4M) |
+| Trainable | All (~33.6M: encoder 28.6M + neck/self-attn 1.2M + precompute 0.1M + decoder+dual canvas 3.7M) |
 
 **Query sampling:** Uniform random over all pixels (NYU has dense GT). Optional: 70% random + 30% high-gradient regions (depth edges) for better edge quality.
 
@@ -650,19 +633,19 @@ $D^*_{\downarrow s}$: GT depth bilinear-downsampled to stride $s$, masked where 
 
 ## 8. Evaluation
 
-**Metrics (computed at K query points on Eigen test set):**
+**Metrics (computed at K query points on Eigen test split):**
 
 | Metric | Formula |
 |--------|---------|
-| AbsRel | $\frac{1}{K}\sum \|d^* - \hat{d}\| / d^*$ |
-| RMSE | $\sqrt{\frac{1}{K}\sum (d^* - \hat{d})^2}$ |
-| $\delta < 1.25^n$ | $\% \text{ of } \max(\hat{d}/d^*, d^*/\hat{d}) < 1.25^n, \; n{=}1,2,3$ |
+| AbsRel | $\frac{1}{K}\sum_q \|d^*_q - \hat{d}_q\| / d^*_q$ |
+| RMSE | $\sqrt{\frac{1}{K}\sum_q (d^*_q - \hat{d}_q)^2}$ |
+| $\delta < 1.25^n$ | $\% \text{ of } \max(\hat{d}_q/d^*_q,\; d^*_q/\hat{d}_q) < 1.25^n, \; n{=}1,2,3$ |
 
 **Baselines:**
-- **DAv2-S dense:** ViT-S encoder + DPT decoder → dense depth → sample at query points (accuracy ceiling).
+- **DAv2-S dense:** ViT-S encoder + DPT decoder → dense depth → sampled at query points (accuracy ceiling for any sparse method at those positions).
 - **Bilinear + MLP:** Bilinear lookup from L1 features + 2-layer MLP depth head (simplest sparse baseline).
 
-**Evaluation protocol:** For each test image, sample $K \in \{1, 64, 256, 1024\}$ query points uniformly. Report accuracy at each $K$. Compare accuracy vs DAv2-S dense baseline (which is $K$-independent). All evaluations use Eigen center crop and depth range $[10^{-3}, 10]$ m.
+**Evaluation protocol:** For each test image, sample $K \in \{64, 256, 1024\}$ query points uniformly. Report accuracy at each $K$. Compare vs DAv2-S dense baseline (sampled at same positions — $K$-independent oracle). All evaluations use Eigen center crop, depth range $[10^{-3}, 10]$ m.
 
 ---
 
@@ -681,26 +664,26 @@ $D^*_{\downarrow s}$: GT depth bilinear-downsampled to stride $s$, masked where 
 | ~~Per-level B5 projections (Section 5.3 old)~~ | ~~136K~~ | **—** | **−136K** |
 | **B1: Multi-scale seed (Section 6.1)** | ~~142K~~ | **160K** | **+18K** |
 | ~~B2: Local cross-attn (2 layers)~~ | ~~891K~~ | **—** | **−891K** |
-| **MSDA Decoder: 3× (MSDA + dual canvas + Q2Q + FFN) (Section 6.2)** | — | **1,833K** | **+1,833K** |
+| **MSDA Decoder: 3× (MSDA + dual canvas + Q2Q + FFN) (Section 6.2)** | — | **2,055K** | **+2,055K** |
 | ~~B3a: L3 cross-attn + dual canvas + Q2Q (2L)~~ | ~~740K~~ | **—** | **−740K** |
-| **B3b: L4 cross-attn + dual canvas + Q2Q (2L) (Section 6.4)** | ~~740K~~ | **1,186K** | **+446K** |
-| **Dual Spatial Canvas shared (Section 6.5)** | — | **125K** | **+125K** |
+| **B3b: L4 cross-attn + dual canvas + Q2Q (2L) (Section 6.4)** | ~~740K~~ | **1,334K** | **+594K** |
+| **Dual Spatial Canvas (Section 6.5)** | — | **69K** | **+69K** |
 | ~~Q2Q₁ + Q2Q₂~~ | ~~896K~~ | **—** | **−896K** (Q2Q now inside every layer) |
 | ~~B5: Fused cross-attn (3L) + type emb~~ | ~~1,431K~~ | **—** | **−1,431K** |
 | **Depth Head (Section 6.6)** | (in B5) | **74K** | (moved out) |
 | **Depth scale param** | — | **0.001K** | **+0.001K** |
 | **Dense aux heads (training only)** | — | **0.4K** | **+0.4K** |
 | | | | |
-| **Neck + self-attn + precompute + decoder** | **~12,083K** | **~4,690K** | **−7,393K** |
-| **Total model** | **~40,683K (~40.7M)** | **~33,290K (~33.3M)** | **−7,393K** |
+| **Neck + self-attn + precompute + decoder** | **~12,083K** | **~5,004K** | **−7,079K** |
+| **Total model** | **~40,683K (~40.7M)** | **~33,604K (~33.6M)** | **−7,079K** |
 
 **What changed in v14:**
 - **Removed:** L3 self-attention (−3,542K), L4 SA dimension 384→192 (−2,656K), B3a decoder+KV (−1,334K), B1 token construction (−93K), B2 (−891K), standalone Q2Q₁/Q2Q₂ (−896K), B5 (−1,431K), B5 pre-compute (−210K), MSDA V projections (−111K, now identity), neck bottleneck channels (−123K), B3b KV fan-in (−148K) = **−11,435K**
-- **Added:** Multi-scale seed (+160K), MSDA decoder 3L (+1,833K), B3b dual canvas+Q2Q (+446K), Dual Canvas shared (+125K), depth head (+74K), depth scale (+0.001K), dense aux (+0.4K) = **+2,638K**
+- **Added:** Multi-scale seed (+160K), MSDA decoder 3L (+2,055K), B3b dual canvas+Q2Q (+594K), Dual Canvas per-layer DWConv (+69K), depth head (+74K), depth scale (+0.001K), dense aux (+0.4K) = **+2,952K**
 - **Kept:** B3b cross-attn+FFN (740K, now with $d \to d$ KV)
-- **Net:** **−7,393K** (model is ~18.2% smaller than v13.1, with major new capabilities: uniform $d$ neck, multi-scale seed, Q2Q at every layer, Dual Spatial Canvas with asymmetric kernels for DPT-like multi-resolution neighborhood context)
+- **Net:** **−7,079K** (model is ~17.4% smaller than v13.1, with major new capabilities: uniform $d$ neck, multi-scale seed, Q2Q at every layer, Dual Spatial Canvas with per-layer W_write + per-layer asymmetric DWConv smooth for DPT-like multi-resolution neighborhood context)
 
-**VRAM estimate:** v13.1 used ~7.4GB at batch=8, K=256. v14 removes L3 self-attention, B3a, L4 SA dimension halved (384→192), and V map projections eliminated (identity). MSDA replaces 91-token cross-attention with 96 bilinear samples. Q2Q adds $K^2 \times d$ per layer (~70MB for 5 layers at K=256). Dual Spatial Canvas adds ~600KB (two canvas tensors at 256×320). With 7.4M fewer params than v13.1, expected v14 VRAM: **~5.5–6.0GB** (comfortable in 8GB).
+**VRAM estimate:** v13.1 used ~7.4GB at batch=8, K=256. v14 removes L3 self-attention, B3a, L4 SA dimension halved (384→192), and V map projections eliminated (identity). MSDA replaces 91-token cross-attention with 96 bilinear samples. Q2Q adds $K^2 \times d$ per layer (~70MB for 5 layers at K=256). Dual Spatial Canvas adds ~600KB (two canvas tensors at 256×320). With 7.1M fewer params than v13.1, expected v14 VRAM: **~5.5–6.0GB** (comfortable in 8GB).
 
 **Inference latency estimate (RTX 4060 Laptop, bf16, batch=1):**
 
@@ -801,10 +784,10 @@ Steps 1–10 (v13.1) form the existing codebase. Steps 11–17 implement the v14
 |------|--------------|-----------------|
 | 11 | **Uniform neck + L4 self-attn** (Section 4): Update pyramid_neck.py to project all levels to $d = 192$. L4 self-attention at 192d (6 heads × 32d). Remove V map projections (identity). Remove L3 self-attention, B3a L3 KV. | Shape test: L1–L4 all [B, 192, H/s, W/s]. L4 SA at 192d. Verify neck ~278K, L4 SA ~886K. |
 | 12 | **B1 → multi-scale seed** (Section 6.1): Sample all 4 neck levels at query center (all 192-d), concat PE (32-d), project 800→192. Replace TokenConstructor. | Shape test: input coords [B, K, 2] → seed [B, K, 192] + pos [B, K, 192]. Verify W_seed 800→192 = ~154K. |
-| 13 | **Dual Spatial Canvas** (Section 6.5): Build `spatial_canvas.py` with (a) dual canvas init from L2 and L3 (both $d$-dim, no V projection needed), (b) per-layer dual read-write-smooth: bilinear gather from both, concat+project via W_read (2d→d), gated fusion, scatter_add_ to both, asymmetric DWConv smooth (L2: DWConv5×5, L3: DWConv3×3), (c) final dual read via W_final (2d→d). | Shape test: F_L2 [B, 192, H/8, W/8], F_L3 [B, 192, H/16, W/16]. Verify scatter at correct positions for each level. Verify both DWConv residuals with correct kernel sizes. Verify gate ∈ (0,1). ~497K params. |
-| 14 | **MSDA DecoderLayer** (Section 6.2): Build single layer with (a) offset prediction Linear, (b) attention weight prediction Linear, (c) bilinear sampling from neck features (identity V maps), (d) per-head aggregation, **(e) dual canvas read-write-smooth**, (f) Q2Q self-attn with spatial PE, (g) FFN. | Shape test: input h [B, K, 192] → output [B, K, 192]. Verify 96 sampling points (6×4×4). Verify both canvases evolve after each layer. Verify offsets near zero at init. |
-| 15 | **MSDA Decoder stack + B3b with dual canvas** (Sections 6.2, 6.4): Stack 3 MSDADecoderLayers + 2 B3b, all with dual canvas sublayer. B3b KV at $d \to d$ (148K). Update SPD forward to: B1(seed) → init dual canvas → 3×MSDA → B3b → final dual canvas read → depth_head. Remove B2, B3a, B5, routing. | End-to-end forward pass test. Compare param count to expected ~33.3M. Verify both canvas states differ at each layer. |
-| 16 | **Dense aux heads + depth head** (Sections 6.6, 7.2): Standalone depth_head.py (MLP + final canvas read + learnable scale). Dense aux Conv2d(192→1) on L2/L3. Update train.py for combined loss. | Verify depth head bias = log(2.5). Verify scale param = 0 at init. Verify dense aux loss decreasing. |
+| 13 | **Dual Spatial Canvas** (Section 6.5): Build `spatial_canvas.py` with (a) dual canvas init from L2 and L3 (both $d$-dim, no V projection needed), (b) per-layer dual write-smooth-read: scatter_add_ to both, asymmetric DWConv smooth (L2: DWConv5×5, L3: DWConv3×3), bilinear gather from both, concat+project via W_read (2d→d), gated fusion. No final W_final needed (write-smooth-read makes last layer's read the final output). | Shape test: F_L2 [B, 192, H/8, W/8], F_L3 [B, 192, H/16, W/16]. Verify scatter at correct positions for each level. Verify both DWConv residuals with correct kernel sizes. Verify gate ∈ (0,1). |
+| 14 | **MSDA DecoderLayer** (Section 6.2): Build single layer with (a) offset prediction Linear, (b) attention weight prediction Linear, (c) bilinear sampling from neck features (identity V maps), (d) per-head aggregation, **(e) dual canvas write-smooth-read**, (f) Q2Q self-attn with spatial PE, (g) FFN. | Shape test: input h [B, K, 192] → output [B, K, 192]. Verify 96 sampling points (6×4×4). Verify both canvases evolve after each layer. Verify offsets near zero at init. |
+| 15 | **MSDA Decoder stack + B3b with dual canvas** (Sections 6.2, 6.4): Stack 3 MSDADecoderLayers + 2 B3b, all with dual canvas sublayer. B3b KV at $d \to d$ (148K). Update SPD forward to: B1(seed) → init dual canvas → 3×MSDA → B3b → depth_head. Remove B2, B3a, B5, routing. | End-to-end forward pass test. Compare param count to expected ~33.6M. Verify both canvas states differ at each layer. |
+| 16 | **Dense aux heads + depth head** (Sections 6.6, 7.2): Standalone depth_head.py (MLP + learnable scale, no canvas read — last decoder layer's canvas read is the final fusion). Dense aux Conv2d(192→1) on L2/L3. Update train.py for combined loss. | Verify depth head bias = log(2.5). Verify scale param = 0 at init. Verify dense aux loss decreasing. |
 | 17 | **Full v14 pipeline**: train 10 epochs with all changes | Target: AbsRel < 0.20 (break through 0.23 ceiling). Monitor: pred range reaching 8m+, no regression after epoch 3, canvas evolving meaningfully (not collapsing to uniform), Q2Q attention patterns. |
 
 **Key changes from v13.1:**
@@ -814,33 +797,152 @@ Steps 1–10 (v13.1) form the existing codebase. Steps 11–17 implement the v14
 - **Removed B3a** (L3 cross-attn, 1,186K) — redundant with L3 canvas + MSDA deformable L3 sampling
 - **Removed L3 Self-Attention** (3,542K) — ConvNeXt Stage 3's 9× DW k7 provides sufficient spatial mixing; L3 canvas provides decoded L3-resolution context
 - **L4 Self-Attention at $d = 192$** (886K, was 3,542K at 384d) — uniform dimension across all attention modules
-- +**Dual Spatial Canvas**: evolving dense feature maps at L2 (stride 8, DWConv5×5) + L3 (stride 16, DWConv3×3) resolutions, scatter-gather-smooth at every decoder layer — asymmetric kernels follow SPN literature: larger for sparser L2, smaller for denser L3 to preserve depth boundaries (~497K params)
+- +**Dual Spatial Canvas**: evolving dense feature maps at L2 (stride 8, DWConv5×5) + L3 (stride 16, DWConv3×3) resolutions, write-smooth-read at every decoder layer — per-layer DWConv smooth (DySPN showed per-iteration kernels outperform shared), asymmetric kernels: larger for sparser L2, smaller for denser L3 to preserve depth boundaries (~809K params). Write-smooth-read order eliminates the need for a final canvas read in the depth head.
 - B3b routing removed (no B5 to route to), KV projections now $d \to d$ (square, information-preserving)
 - +Dense aux loss on L2/L3 (dense encoder gradient)
 - +Learnable depth scale (break output ceiling)
 - $\lambda_{\text{var}}$: 0.5 → 0.15 (stronger metric signal)
 - Per-image SILog + data augmentation (from Exp 6–7 fixes)
 
-### 10.4 Next Step: Inter-Canvas Communication (post-baseline)
+### 10.4 Triple Canvas Upgrade (post-Exp 8)
 
-**Problem:** L2 and L3 canvases evolve independently — no direct cross-resolution information flow. Queries provide indirect relay (read both → process → write both), but this is sparse (K=256 points) and bottlenecked through the query vector. DPT has explicit multi-scale fusion at every stage.
+**Context:** At 416×544 resolution, canvas coverage dropped significantly from the 256×320 design:
 
-**Proposed fix:** Bidirectional L2↔L3 exchange after DWConv smooth each layer:
+| Canvas | 256×320 coverage | 416×544 coverage | Change |
+|--------|:-:|:-:|:-:|
+| L2 (stride 8) | 20% | 7% | −65% |
+| L3 (stride 16, DWConv 3×3) | 80% | 29% | −64% |
+
+L3 at 29% is now sparse enough that many cells receive no query writes. L2 at 7% was already sparse — now critically so.
+
+**Fix: Triple Canvas L2 + L3 + L4**
+
+Add L4 canvas (stride 32) and upgrade L3 smooth kernel from DWConv3×3 to DWConv5×5:
+
+| Canvas | Resolution (416×544) | Cells | Coverage (K=256) | DWConv kernel | Role |
+|--------|:---:|:---:|:---:|:---:|---|
+| L2 (stride 8) | 52×68 = 3,536 | 7% | DWConv 5×5 | Fine edges, depth boundaries |
+| L3 (stride 16) | 26×34 = 884 | 29% | DWConv 5×5 (was 3×3) | Mid-level neighborhood |
+| L4 (stride 32) | 13×17 = 221 | 116% | DWConv 3×3 | Dense global, scene-level |
+
+**Why L3 upgraded to 5×5:** At 29% coverage L3 is now in the "sparse" regime — same logic that justified L2's 5×5 at 20%. Faster propagation needed to fill coverage gaps. Physical area: 5×5 at stride 16 = 80×80px, still local.
+
+**Why L4 uses 3×3:** At 116% coverage (average 1.16 queries per cell), L4 is dense — the original rationale for L3's 3×3 (boundary preservation, NLSPN/DySPN findings). Larger kernels would cause mixed-depth blurring.
+
+**W_read updated:** $3d \to d$ (was $2d \to d$), reads from all three canvases. Canvas init: `canvas['L4'] = features['L4'].clone()`.
+
+**Extra params:** ~85K (L4 write projections + L4 DWConv smooth + W_read expansion from 2d→3d to 3d→d). Total canvas: ~894K (was ~809K).
+
+**L1 canvas (stride 4) rejected:** At K=256, L1 coverage is 0.5% at 416×544 — too sparse. DWConv on L1 (52×68×4 = 104×136 cells) adds ~880M MACs. L2 at stride 8 remains the finest viable canvas.
+
+### 10.5 Proposed: Gated Cross-Canvas Cascade (Top-Down)
+
+**Problem:** The three canvases evolve independently — the only cross-scale information flow is through queries (read all three → process → write all three). This relay is sparse (K=256 points) and bottlenecked through the $d$-dim query vector. DPT has explicit top-down multi-scale fusion at every stage.
+
+**What DPT does:** Reassemble at 4 resolutions, then top-down cascade: each level receives upsampled coarser features, fused via ResidualConvUnit (2× Conv2d(256,256,k=3) + ReLU + residual). Single-pass, 4 fusion steps. Each RCU is ~1.18M params.
+
+**Why not copy DPT directly:** DPT does 4 fusion steps ONCE (single-pass decoder). SPD would do cascade at every decoder layer (5 layers × 2 steps = 10 cascades). DPT's RCU is expensive (~1.18M params each), but SPD's DWConv approach is ~580× cheaper per step. Still, full RCU per layer is overkill.
+
+**Why bare upsample+add is too weak:** Bilinear upsampling is a fixed low-pass filter. Adding blurred L4 features directly to L3 (or L3 to L2) would smear depth boundaries — exactly what NLSPN/DySPN warn against. The receiving canvas has sharp features; the sending canvas (after upsampling) has smooth features. Uncontrolled addition blurs the receiver.
+
+**Why not concat + 1×1 Conv (FPN-style):** The natural alternative is `concat([L3, bilinear(L4)]) → Conv2d(2d→d, k=1)` — standard FPN lateral connection. Cost: Conv2d(2×192→192, k=1) = 73,728 params per step, **~147K total**. Two fundamental problems: (1) 1×1 conv has no spatial context — it cannot distinguish depth boundaries from flat surfaces, and will blend blurry coarse features into sharp fine features uniformly; (2) bilinear upsampling is a fixed low-pass filter — depth boundaries in the coarse canvas are already smoothed before the conv sees them. The 1×1 conv cannot recover sharpness that bilinear discarded. FPN works for encoder features where the semantic gap between levels justifies replacement; both canvases here are semantically similar decoded features, where boundary preservation is critical.
+
+**Design: Joint-gate cascade BEFORE smooth**
+
+The key insight from the concat analysis: both fine AND coarse features should inform the gating decision. Fine canvas (L3) sees the boundary; coarse canvas (upsampled L4) sees the global depth context. A gate derived from only one side is incomplete. Using DWConv on both (instead of 1×1 concat compression) retains spatial context at negligible cost:
+
+```python
+# In __init__:
+self.gate_L4toL3_fine  = nn.Conv2d(d, d, kernel_size=3, padding=1, groups=d)  # DWConv on fine
+self.gate_L4toL3_coarse = nn.Conv2d(d, d, kernel_size=3, padding=1, groups=d) # DWConv on coarse
+self.gate_L3toL2_fine  = nn.Conv2d(d, d, kernel_size=3, padding=1, groups=d)
+self.gate_L3toL2_coarse = nn.Conv2d(d, d, kernel_size=3, padding=1, groups=d)
+
+# In forward (after write, BEFORE smooth):
+
+# --- Top-down cascade ---
+l4_up = F.interpolate(canvas['L4'], size=canvas['L3'].shape[2:], mode='bilinear')
+gate_43 = torch.sigmoid(
+    self.gate_L4toL3_fine(canvas['L3']) + self.gate_L4toL3_coarse(l4_up)  # joint gate
+)
+canvas['L3'] = canvas['L3'] + gate_43 * l4_up                             # residual
+
+l3_up = F.interpolate(canvas['L3'], size=canvas['L2'].shape[2:], mode='bilinear')
+gate_32 = torch.sigmoid(
+    self.gate_L3toL2_fine(canvas['L2']) + self.gate_L3toL2_coarse(l3_up)  # joint gate
+)
+canvas['L2'] = canvas['L2'] + gate_32 * l3_up                             # residual
+
+# --- Then existing smooth (now also refines the fused features) ---
+canvas['L2'] = canvas['L2'] + self.smooth_L2(canvas['L2'])
+canvas['L3'] = canvas['L3'] + self.smooth_L3(canvas['L3'])
+canvas['L4'] = canvas['L4'] + self.smooth_L4(canvas['L4'])
+```
+
+**Three layers of defense against blurring:**
+
+1. **Joint spatial gate** (DWConv k=3 on BOTH fine and coarse → sigmoid): Fine canvas contributes boundary sharpness signal ("I'm at a depth edge — gate down"). Coarse canvas contributes global context ("this is a flat surface at 3m — gate up"). Together they make a richer, more reliable gating decision than either alone. DWConv k=3 gives 3×3 spatial context — a single pixel can't distinguish edges from noise.
+
+2. **Residual addition**: `canvas['L3'] = canvas['L3'] + gate * l4_up`. Even with gate=1, fine canvas features are preserved. The upsampled coarse is additive context, not a replacement.
+
+3. **Post-fusion DWConv smooth**: The existing smooth layers now serve double duty — smoothing both scattered query writes AND fused cross-scale features at zero extra parameter cost.
+
+**Why cascade BEFORE smooth:** If cascade happens after smooth, the cross-scale information arrives too late to be refined by the smooth layers. By cascading before smooth, the DWConv smooth operates on the fused multi-scale features, providing natural post-fusion spatial refinement.
+
+**Why joint gate is better than fine-only gate:** At flat surfaces (uniform L3 features), the fine-only gate has little signal — it cannot distinguish "open gate, safe to accept coarse" from "close gate, already correct." The coarse canvas DWConv provides the global depth consistency signal the fine gate lacks. At boundaries, the fine canvas still dominates the gate decision (sharp L3 gradient → gate down), so boundary preservation is not compromised.
+
+**Why top-down only (no bottom-up):** L4 has 116% coverage — dense, globally-informed. L2 has 7% — sparse. Fine-to-coarse propagation provides little new information. DPT also uses top-down cascade exclusively.
+
+**Params:** 4 × DWConv(192, k=3) = 4 × 192 × 9 = **6,912 params** (~7K). Was 3.5K for fine-only gate — 2× increase, still negligible.
+
+**Compute per layer:** 2 × bilinear upsample + 4 × DWConv k=3 (on L3: 26×34, on L2: 52×68) + element-wise add + multiply. ~1M MACs per layer, ~5M total. **< 0.02% of encoder MACs.**
+
+### 10.6 Upsampled Canvas Dense Training (replacing Neck Aux)
+
+**Problem with current neck aux loss:** The dense auxiliary heads (`aux_head_l2`, `aux_head_l3`) apply Conv2d(192→1) on **neck features** (raw encoder output before any decoder processing). This is meaningless as dense supervision — raw encoder features are not prediction-ready. Supervising them is no different in principle from supervising the raw image.
+
+**Why canvas features are the right place:** Canvas L2/L3/L4 after all 5 decoder layers contain **decoded, prediction-ready features** — they have been through cross-attention, write-smooth-read, Q2Q, and FFN at every layer. These are the features that W_read reads from at inference. Supervising them directly forces the canvas to encode correct depth, which at inference makes the W_read lookup give each query the right spatial context.
+
+**Problem with naive canvas dense supervision (Conv2d on canvas at native stride):** Canvas L2 is at stride 8 — 52×68 = 3,536 cells = only 1.56% of the original image pixel positions. Dense training at stride 8 supervises depth only at 8px granularity. Depth boundaries thinner than 8px, fine structures, and small objects are invisible to this training signal. Too coarse to be meaningfully "dense."
+
+**Design: Upsample canvas features for finer-resolution dense supervision (training only)**
 
 ```
-# Top-down: coarse semantic context helps fine level
-F_L2 += gate_down × Conv1×1(bilinear_upsample(F_L3))    # L3 stride 16 → L2 stride 8
+canvas['L2']  (stride 8, d=192, decoded features)
+→ bilinear ×2  [training only]           # stride 4, 104×136 = 14,144 positions
+→ Conv2d(192, 32, k=3, pad=1) → GELU    # lightweight refinement at stride 4
+→ Conv2d(32, 1, k=1) → exp(s_dense)     # dense depth at stride 4
 
-# Bottom-up: fine edge details help coarse level
-F_L3 += gate_up × Conv1×1(bilinear_downsample(F_L2))     # L2 stride 8 → L3 stride 16
+GT depth → bilinear ↓4                  # downsample GT to stride 4 (H/4 × W/4)
+→ SILog(pred_stride4, gt_stride4)       # 14,144 supervised positions
 ```
 
-**Why it helps:**
-- **L3→L2 (top-down):** L2 positions in flat surface regions (~5% scatter coverage at 256×320) get dense contextual guidance from L3 (80% coverage), instead of waiting for a query to land nearby.
-- **L2→L3 (bottom-up):** L3 positions near depth edges get fine-grained correction from L2 — currently L3 only knows about edges if a query at the edge writes to it.
+Similarly for L3 (stride 16 → bilinear ×2 → stride 8) and L4 (stride 32 → bilinear ×2 → stride 16). GT downsampled to match.
 
-**Cost:** 2 × Conv1×1($d \to d$) = ~74K params (shared across layers) + 2 scalar gates. Compute negligible (bilinear resample on small maps).
+**Why bilinear ×2 upsample of canvas features (not ×4 or ×8):** ×2 gives 4× more supervision positions (14,144 vs 3,536) while keeping the upsampled features close to the original canvas resolution — the bilinear interpolation is a mild extrapolation between adjacent cells, which is well-conditioned. ×4 or ×8 would produce mostly interpolated/hallucinated features far from any canvas cell, providing unreliable gradient signal.
 
-**When to add:** After Step 17 baseline validation. If base v14 hits AbsRel < 0.20, this is an incremental improvement. If it plateaus above 0.20, this is the cheapest way to get DPT-like multi-scale fusion in our sparse framework.
+**Why this is not conflicting with the sparse query objective:** At inference, the final decoder layer performs `r_q = bilinear(canvas['L2'], p_q)` — a **direct bilinear lookup** of canvas L2 at query positions. If the canvas encodes correct absolute depth at every cell, this lookup directly provides the right depth signal to each query. Direct depth encoding (what the dense training demands) is exactly what makes the canvas maximally useful for the final query lookup — the objectives are 100% aligned.
 
-**L1 canvas (stride 4) was considered and rejected:** At K=256, L1 scatter coverage is ~1.3% at 256×320 and ~0.3% at 480×640 — too sparse for meaningful canvas evolution. DWConv7×7 smooth on L1 adds ~880M MACs (nearly doubles decoder cost). L2 at stride 8 is the sweet spot between edge resolution and scatter coverage.
+**Why not use neck L1 (stride 4) for dense supervision:** Neck L1 features are raw encoder output before any decoder processing. A dense head on neck L1 would be supervising features that have no depth reasoning built in — equivalent to predicting depth from the raw image features. The gradient does flow back to the encoder, but it does nothing to improve canvas quality. Canvas features are fundamentally different: they accumulate decoded query information across 5 layers.
+
+**Gradient balance:** Dense head at stride 4 produces ~14,144 loss terms per image; sparse query produces K=256. This is a ~55× imbalance. However, both push canvas features in the same direction (encode correct depth), so the dense gradient reinforcing the sparse gradient does not cause objective conflict. λ_canvas = 0.3–0.5 keeps the dense gradient from completely dominating early training before the canvas is well-populated.
+
+**Forces smooth operators to propagate:** Unwritten canvas cells (93% of L2, 71% of L3) only evolve through DWConv smooth. Without dense loss, smooth operators propagate blindly. With canvas dense loss, every cell at stride 4 has a depth target — smooth operators must learn to propagate correct depth from written cells to unwritten cells or every unwritten position is penalized. This transforms smooth operators from passive diffusers into actively-supervised spatial reasoners.
+
+**Loss:**
+$$\mathcal{L} = L_{\text{silog}}(\hat{d}_q, d_q^*) + \lambda_{\text{canvas}} \sum_{\ell \in \{L2, L3, L4\}} L_{\text{silog}}(\hat{D}_\ell^{\uparrow 2}, D^*_{\downarrow s_\ell/2})$$
+
+where $\hat{D}_\ell^{\uparrow 2}$ is the canvas level $\ell$ features bilinearly upsampled ×2 then passed through the training-only head. $D^*_{\downarrow s}$: GT downsampled to stride $s$.
+
+**Params:** Per canvas level: Conv2d(192→32, k=3) + Conv2d(32→1, k=1) = 55,296 + 33 = **~55K per level**, 3 levels = **~165K training-only** (discarded at inference). Plus scale parameter s_dense.
+
+### 10.7 Implementation Priority
+
+These changes are planned for Exp 10 (after Exp 9 completes):
+
+| Change | Params | Complexity | Expected impact |
+|--------|-------:|:---:|---|
+| Upsampled canvas dense training (Section 10.6) | +165K training-only | Medium | High — direct decoder supervision at stride 4, forces smooth operators, 55× more gradient than sparse |
+| Joint-gate cross-canvas cascade (Section 10.5) | +7K | Medium | Medium — boundary-aware multi-scale fusion, joint gate from fine+coarse |
+
+Canvas dense training should be implemented first — addresses the fundamental supervision gap directly. The gated cascade can be added in the same experiment or separately to isolate its contribution.
