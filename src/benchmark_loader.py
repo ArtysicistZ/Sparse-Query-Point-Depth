@@ -9,17 +9,15 @@ from config import H_IMG as H, W_IMG as W
 
 
 WARMUP_STEPS = 3
-MEASURE_STEPS = 200
+MEASURE_STEPS = 50
 N_DATASET = 47584
 
 
-def run_step(model, scaler, images, depth_map):
+def run_step(model, images, depth_map):
     with torch.amp.autocast('cuda', dtype=torch.bfloat16):
         pred = model(images)
         loss = l_dense_silog(pred, depth_map)
-    scaler.scale(loss).backward()
-    scaler.step(torch.optim.SGD(model.parameters(), lr=0))
-    scaler.update()
+    loss.backward()
     model.zero_grad(set_to_none=True)
 
 
@@ -29,19 +27,18 @@ def test_batch_size(model, device):
     for bs in [1, 2, 3, 4, 6, 8, 10, 12]:
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
-        scaler = torch.amp.GradScaler()
 
         images = torch.randn(bs, 3, H, W, device=device)
         depth_map = torch.rand(bs, 1, H, W, device=device) * 9.0 + 1.0
 
         try:
             for _ in range(WARMUP_STEPS):
-                run_step(model, scaler, images, depth_map)
+                run_step(model, images, depth_map)
 
             torch.cuda.synchronize()
             t0 = time.perf_counter()
             for _ in range(MEASURE_STEPS):
-                run_step(model, scaler, images, depth_map)
+                run_step(model, images, depth_map)
             torch.cuda.synchronize()
             elapsed = time.perf_counter() - t0
 
@@ -51,8 +48,8 @@ def test_batch_size(model, device):
             print(f"  batch_size={bs:>2}  |  {imgs_per_sec:.1f} img/s  |  "
                   f"{peak_mb:.0f} MB peak  |  {elapsed/MEASURE_STEPS:.3f} s/step")
 
-        except RuntimeError as e:
-            if "out of memory" in str(e).lower():
+        except (RuntimeError, torch.AcceleratorError) as e:
+            if "out of memory" in str(e).lower() or "illegal memory" in str(e).lower():
                 torch.cuda.empty_cache()
                 print(f"  batch_size={bs:>2}  |  OOM")
                 break
@@ -143,7 +140,6 @@ if __name__ == "__main__":
     print()
 
 
-    '''
     print("=== Phase 1: Training batch size sweep ===")
     model.train()
     bs_results = test_batch_size(model, device)
@@ -153,7 +149,6 @@ if __name__ == "__main__":
         print(f"\n  Best: batch_size={best[0]}  ({best[1]:.1f} img/s, {best[2]:.0f} MB)")
         print(f"  ~{N_DATASET // best[0]} steps/epoch  |  "
               f"~{(N_DATASET // best[0]) * best[3] / 60:.1f} min/epoch")
-    '''
     
 
     print(f"\n=== Phase 2: Inference speed (eval mode) ===")

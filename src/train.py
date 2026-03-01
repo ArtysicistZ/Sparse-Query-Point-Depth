@@ -9,9 +9,12 @@ from models.spd import SPD
 from utils.losses import l_dense_silog
 from data.nyu_dataset import NYUDataset
 from evaluate import evaluate
-from config import EPOCHS
+from config import EPOCHS, BATCH_SIZE, ENCODER_LR, DECODER_LR
 
-LOG_FILE = "train_log.json"
+import os
+
+SAVE_DIR = "checkpoints/v15.1"
+LOG_FILE = os.path.join(SAVE_DIR, "train_log.json")
 
 
 def build_optimizer(model):
@@ -19,8 +22,8 @@ def build_optimizer(model):
     decoder_params = [p for n, p in model.named_parameters() if not n.startswith("encoder")]
 
     optimizer = torch.optim.AdamW([
-        {'params': encoder_params, 'lr': 1e-5},
-        {'params': decoder_params, 'lr': 1e-4}
+        {'params': encoder_params, 'lr': ENCODER_LR},
+        {'params': decoder_params, 'lr': DECODER_LR}
     ], weight_decay=0.01)
 
     return optimizer
@@ -32,10 +35,10 @@ def train():
     model = SPD(pretrained=True).to(device)
 
     optimizer = build_optimizer(model)
-    scaler = torch.amp.GradScaler()
+    
 
     dataset = NYUDataset(split="train", K=256)
-    train_loader = DataLoader(dataset, batch_size=12, shuffle=True, num_workers=4, pin_memory=True)
+    train_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
 
     total_steps = len(train_loader) * EPOCHS
     warmup_steps = 500
@@ -43,8 +46,9 @@ def train():
     cosine = CosineAnnealingLR(optimizer, T_max=total_steps - warmup_steps, eta_min=1e-6)
     scheduler = SequentialLR(optimizer, [warmup, cosine], milestones=[warmup_steps])
 
-    log = {"config": {"epochs": EPOCHS, "batch_size": 12, "encoder_lr": 1e-5,
-                      "decoder_lr": 1e-4, "warmup_steps": warmup_steps,
+    log = {"config": {"epochs": EPOCHS, "batch_size": BATCH_SIZE, 
+                      "encoder_lr": ENCODER_LR,
+                      "decoder_lr": DECODER_LR, "warmup_steps": warmup_steps,
                       "total_steps": total_steps}, "epochs": []}
 
     for epoch in range(EPOCHS):
@@ -63,11 +67,9 @@ def train():
                 pred_depth = model(images)
                 loss = l_dense_silog(pred_depth, depth_map)
 
-            scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
+            loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            scaler.step(optimizer)
-            scaler.update()
+            optimizer.step()
             scheduler.step()
 
             epoch_loss += loss.item()
@@ -104,7 +106,9 @@ def train():
 
         with open(LOG_FILE, "w") as f:
             json.dump(log, f, indent=2)
-        print(f"  Log saved to {LOG_FILE}")
+
+        torch.save(model.state_dict(), os.path.join(SAVE_DIR, f"checkpoint_epoch{epoch+1}.pt"))
+        print(f"  Log saved to {LOG_FILE}  |  Checkpoint saved")
 
 
 if __name__ == "__main__":

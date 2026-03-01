@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from models.encoder.convnext import ConvNeXtV2Encoder
+from models.encoder_convnext.convnext import ConvNeXtV2Encoder
 
 class ProjectionNeck(nn.Module):
 

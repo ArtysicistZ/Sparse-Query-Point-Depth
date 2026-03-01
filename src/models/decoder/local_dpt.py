@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from models.decoder.rcu import RCU
+from config import H_IMG, W_IMG
 
 class LocalDPT(nn.Module):
     
@@ -45,6 +46,8 @@ class LocalDPT(nn.Module):
         out = F.interpolate(out, scale_factor=2, mode='bilinear', align_corners=True)
         out = self.output_conv2(out)
         depth = torch.exp(out)
+        
+        depth = F.interpolate(depth, size=(H_IMG, W_IMG), mode='bilinear', align_corners=True)
 
         return depth
     
@@ -65,15 +68,19 @@ class LocalDPT(nn.Module):
     def forward_infer(self, s8: torch.Tensor, features: dict[str, torch.Tensor], coords: torch.Tensor) -> torch.Tensor:
 
         B, K, _ = coords.shape
+
+        stride_8 = W_IMG / s8.shape[3]  
+        stride_4 = W_IMG / features['L1'].shape[3]
+        stride_2 = stride_4 / 2
         
-        cx8 = coords[..., 0] / 8.0
-        cy8 = coords[..., 1] / 8.0
+        cx8 = coords[..., 0] / stride_8
+        cy8 = coords[..., 1] / stride_8
 
         H8, W8 = s8.shape[2], s8.shape[3]
         H4, W4 = features['L1'].shape[2], features['L1'].shape[3]
 
-        cx4 = coords[..., 0] / 4.0
-        cy4 = coords[..., 1] / 4.0
+        cx4 = coords[..., 0] / stride_4
+        cy4 = coords[..., 1] / stride_4
 
         N_s8 = 9
         N_s4 = 7
@@ -107,8 +114,8 @@ class LocalDPT(nn.Module):
         s4 = sampled_s8 + sampled_l2
         s4 = F.interpolate(s4, scale_factor=2, mode='bilinear', align_corners=True) # 10*10
 
-        off_x_s8 = ((coords[..., 0] % 8) >= 4).long()
-        off_y_s8 = ((coords[..., 1] % 8) >= 4).long()
+        off_x_s8 = ((coords[..., 0] % stride_8) >= (stride_8 / 2)).long()
+        off_y_s8 = ((coords[..., 1] % stride_8) >= (stride_8 / 2)).long()
         s4 = self.recenter_crop(s4, offset_x=off_x_s8, offset_y=off_y_s8, crop=N_s4)
         s4 = self.rn2_out(s4)
 
@@ -135,16 +142,16 @@ class LocalDPT(nn.Module):
         s2 = sampled_s4 + sampled_l1
         s2 = F.interpolate(s2, scale_factor=2, mode='bilinear', align_corners=True)
 
-        off_x_s4 = ((coords[..., 0] % 4) >= 2).long()
-        off_y_s4 = ((coords[..., 1] % 4) >= 2).long()
+        off_x_s4 = ((coords[..., 0] % stride_4) >= (stride_4 / 2)).long()
+        off_y_s4 = ((coords[..., 1] % stride_4) >= (stride_4 / 2)).long()
         s2 = self.recenter_crop(s2, offset_x=off_x_s4, offset_y=off_y_s4, crop=5)
         s2 = self.rn1_out(s2)
 
         s2 = F.conv2d(s2, self.output_conv1.weight, self.output_conv1.bias, padding=0)
         s1 = F.interpolate(s2, scale_factor=2, mode='bilinear', align_corners=True)
 
-        off_x_s2 = ((coords[..., 0] % 2) >= 1).long()
-        off_y_s2 = ((coords[..., 1] % 2) >= 1).long()
+        off_x_s2 = ((coords[..., 0] % stride_2) >= (stride_2 / 2)).long()
+        off_y_s2 = ((coords[..., 1] % stride_2) >= (stride_2 / 2)).long()
         s1 = self.recenter_crop(s1, offset_x=off_x_s2, offset_y=off_y_s2, crop=3)
 
         out = F.conv2d(s1, self.output_conv2[0].weight, self.output_conv2[0].bias, padding=0)
