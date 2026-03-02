@@ -13,7 +13,7 @@ from config import EPOCHS, BATCH_SIZE, ENCODER_LR, DECODER_LR
 
 import os
 
-SAVE_DIR = "checkpoints/v15.1"
+SAVE_DIR = "checkpoints/v15.1.1"
 LOG_FILE = os.path.join(SAVE_DIR, "train_log.json")
 
 
@@ -77,16 +77,26 @@ def train():
 
             if step % 100 == 0:
                 with torch.no_grad():
-                    p_mean = pred_depth.mean().item()
-                    p_std = pred_depth.std().item()
+                    pred = pred_depth.float()
+                    gt = depth_map.float()
+                    mask = gt > 0
+                    p_valid = pred[mask].clamp(min=1e-3)
+                    g_valid = gt[mask]
+                    abs_rel = (torch.abs(p_valid - g_valid) / g_valid).mean().item()
+                    s_star = (g_valid / p_valid).median().item()
+                    abs_rel_s = (torch.abs(p_valid * s_star - g_valid) / g_valid).mean().item()
+                    p_mean = p_valid.mean().item()
+                    p_std = p_valid.std().item()
+                    g_mean = g_valid.mean().item()
+                    g_std = g_valid.std().item()
                 lr_enc = optimizer.param_groups[0]['lr']
                 lr_dec = optimizer.param_groups[1]['lr']
-                print(f"Epoch {epoch+1}, Step {step}/{len(train_loader)}, "
-                      f"Loss: {loss.item():.4f}, "
-                      f"pred: {p_mean:.2f}+/-{p_std:.2f} "
-                      f"[{pred_depth.min().item():.2f}, {pred_depth.max().item():.2f}], "
-                      f"gt: [{depth_map.min().item():.2f}, {depth_map.max().item():.2f}], "
-                      f"lr: {lr_enc:.2e}/{lr_dec:.2e}")
+                print(f"E{epoch+1} S{step}/{len(train_loader)} "
+                      f"loss={loss.item():.4f} "
+                      f"AR={abs_rel:.3f} s*={s_star:.3f} sAR={abs_rel_s:.3f} "
+                      f"pred={p_mean:.2f}±{p_std:.2f} "
+                      f"gt={g_mean:.2f}±{g_std:.2f} "
+                      f"lr={lr_enc:.1e}/{lr_dec:.1e}")
 
         epoch_time = time.time() - t0
         avg_loss = epoch_loss / epoch_steps
