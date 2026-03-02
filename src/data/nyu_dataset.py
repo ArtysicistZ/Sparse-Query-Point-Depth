@@ -12,7 +12,7 @@ STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 # NYU native resolution
 NYU_H, NYU_W = 480, 640
-MIN_DEPTH, MAX_DEPTH = 1e-5, 1000.0
+MIN_DEPTH, MAX_DEPTH = 1e-5, 10.0
 
 
 class NYUDataset(Dataset):
@@ -34,24 +34,24 @@ class NYUDataset(Dataset):
         depth = item["depth_map"]  # PIL 480x640
 
         if self.is_train:
-            # --- Random rotation +/-2.5 degrees ---
+            # Random rotation +/-2.5 degrees
             if random.random() < 0.5:
                 angle = random.uniform(-2.5, 2.5)
                 image = image.rotate(angle, resample=Image.BILINEAR, fillcolor=0)
                 depth = depth.rotate(angle, resample=Image.NEAREST, fillcolor=0)
 
-            # --- Random crop 416x544 from 480x640 ---
+            # Random crop
             top = random.randint(0, NYU_H - H)
             left = random.randint(0, NYU_W - W)
             image = image.crop((left, top, left + W, top + H))
             depth = depth.crop((left, top, left + W, top + H))
 
-            # --- Horizontal flip ---
+            # Horizontal flip
             if random.random() < 0.5:
                 image = image.transpose(Image.FLIP_LEFT_RIGHT)
                 depth = depth.transpose(Image.FLIP_LEFT_RIGHT)
 
-            # --- Color augmentation (BTS-style, on float32 numpy) ---
+            # Color (BTS)
             image = np.array(image).astype(np.float32) / 255.0
 
             # Gamma
@@ -69,12 +69,13 @@ class NYUDataset(Dataset):
             image = np.clip(image, 0.0, 1.0)
 
         else:
-            # --- Validation: resize to target resolution ---
-            image = image.resize((W, H), resample=Image.BILINEAR)
-            depth = depth.resize((W, H), resample=Image.NEAREST)
+            top = (NYU_H - H) // 2   # = 65
+            left = (NYU_W - W) // 2  # = 82
+            image = image.crop((left, top, left + W, top + H))
+            depth = depth.crop((left, top, left + W, top + H))
             image = np.array(image).astype(np.float32) / 255.0
 
-        # --- Normalize and convert ---
+        # Normalize and convert
         image = (image - MEAN[np.newaxis, np.newaxis, :]) / STD[np.newaxis, np.newaxis, :]
         image = torch.from_numpy(image).permute(2, 0, 1).float()  # [C, H, W]
 
@@ -86,7 +87,7 @@ class NYUDataset(Dataset):
         if self.is_train:
             return image, depth_map
 
-        # --- Sample query points from valid pixels ---
+        # Sample query points from valid pixels
         valid_y, valid_x = np.where(depth >= MIN_DEPTH)
         indices = np.random.choice(len(valid_y), self.K, replace=True)
 

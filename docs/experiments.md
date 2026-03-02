@@ -346,15 +346,48 @@ All experiments show: fast initial learning (epoch 1-2), then regression or plat
 - **Diagnosis:** Encoder LR 1e-5 too high for DINOv2 (whose features are already depth-relevant from self-supervised pretraining). Feature drift destabilized decoder's scale mapping. Structure survives (relative ordering robust) but absolute scale breaks.
 - **Fix:** Reduced encoder LR to 5e-6, changed λ to 0.85 (proven from-scratch standard).
 
-### Attempt 3: Corrected parameters (in progress)
-- **Config:** encoder 5e-6, decoder 1e-4, λ_var=0.85, F.softplus activation
-- **Status:** Training restarted with corrected parameters. Results pending.
+### Attempt 3: Resize preprocessing bug (terminated)
+- **Config:** encoder 5e-6, decoder 1e-4, λ_var=0.50, F.softplus activation
+- **Bug:** Validation preprocessing used `image.resize((W, H))` instead of center crop — downscaled 480×640 → 350×476 (0.73× scale). ViT patches covered 1.88× larger physical area at validation than at training. This broke the learned scale mapping: model predicts at training scale, validation GT is at native scale.
+- **Symptom:** s*=0.8437 (model predicts ~19% too deep), AR=0.2282. Scaled AR=0.1247 — after correcting scale, half the error disappears, confirming the mismatch was scale-only.
+- **Dense vs sparse comparison (at resize bug):** Dense AR=0.2411, Sparse AR=0.2282 — essentially identical, confirming sparse path is equivalent to dense path.
+- **Fix:** Changed validation to center crop at (65, 82): `image.crop((82, 65, 82+476, 65+350))` — same physical resolution as training.
 
 **Key learnings:**
 1. **Dead ReLU is fatal for from-scratch decoder training.** F.softplus is the safe default when output layer init is random.
 2. **DINOv2 encoder LR must be lower than ConvNeXt.** DINOv2's self-supervised features are already depth-relevant; too-high LR causes feature drift that destabilizes decoder.
-3. **λ_var=0.85 is the proven from-scratch standard** (BTS, AdaBins, PixelFormer all use it). λ=0.50 was DAv2's fine-tuning setting (different regime).
+3. **Resize vs crop in validation is a critical preprocessing mismatch.** Resize changes ViT patch physical coverage; crop preserves it. All depth scale calibration breaks if train/val resolutions differ physically.
 4. **Full NYU (47K) vs ~4K subset** used in Exp 1–10 is a critical difference. Exp 1–10 results are not directly comparable to Exp 11–12.
+
+---
+
+## Exp 13: v15.1.1 — crop fix, full NYU, 7 epochs
+- **Architecture:** v15.1 — DINOv2 ViT-S + DPT decoder (identical to Exp 12)
+- **Key fix:** Validation preprocessing changed resize → center crop. Both train and val now use native-resolution 350×476 crops.
+- **Config:** encoder 5e-6, decoder 1e-4, λ_var=0.50, F.softplus, batch=2
+- **Dataset:** Full NYU train (47,584), val (654)
+- **Scheduler:** Linear warmup (500 steps) → CosineAnnealingLR, total 237,920 steps
+- **Checkpoint:** `checkpoints/v15.1.1/`
+
+| Epoch | Train Loss | AbsRel (sp) | SILog | d<1.25 | s* | Scaled AR | Dense AR | 0-2m | 2-5m | 5-10m |
+|-------|-----------|------------|-------|--------|-----|-----------|----------|------|------|-------|
+| 1     | 0.1330    | 0.1285     | 0.1823 | 83.5% | 1.031 | 0.1296 | 0.1223 | 0.1552 | 0.1138 | 0.1602 |
+| 2     | 0.0918    | 0.1249     | 0.1770 | 85.2% | 0.992 | 0.1237 | 0.1230 | 0.1717 | 0.1012 | 0.1609 |
+| 3     | 0.0797    | 0.1176     | 0.1719 | 85.5% | 1.039 | 0.1170 | 0.1104 | 0.1350 | 0.1041 | 0.1706 |
+| 4     | 0.0720    | 0.1173     | 0.1686 | 86.2% | 1.003 | 0.1177 | 0.1132 | 0.1544 | 0.0979 | 0.1534 |
+| 5     | 0.0662    | 0.1154     | 0.1718 | 86.3% | 1.033 | 0.1154 | **0.1075** | 0.1333 | 0.1001 | 0.1839 |
+| 6     | 0.0618    | **0.1150** | 0.1698 | 86.3% | 1.031 | 0.1152 | 0.1080 | 0.1345 | 0.0997 | 0.1784 |
+| 7     | 0.0581    | 0.1184     | 0.1720 | 85.6% | 1.042 | 0.1175 | 0.1102 | 0.1391 | 0.1037 | 0.1725 |
+
+**Best results:** Sparse AR **0.1150** (epoch 6), Dense AR **0.1075** (epoch 5), d<1.25 **86.3%** (epochs 5–6).
+
+**Conclusions:**
+1. **Crop fix confirmed as primary issue.** s* ≈ 1.0 throughout all 7 epochs (range 0.99–1.04) — scale calibration is correct. Previously with resize: s*=0.84. Raw AR improved from 0.2282 → 0.1150 (49% reduction).
+2. **No regression pattern.** Training remained stable for 7 epochs without the dramatic overfitting seen in all v13/v14 experiments. Loss decreases monotonically (0.133→0.058). AbsRel plateaus at epoch 5–6 then shows minor rise at epoch 7.
+3. **Dense ≈ Sparse confirmed.** Dense AR tracks within 0.005–0.010 of sparse AR across all epochs. The sparse path is a valid and equivalent evaluation mode.
+4. **Far-depth performance dramatically improved.** 5-10m AR is now 0.15–0.18 vs 0.40–0.52 in v13/v14. The full-dataset + dense training + correct preprocessing combination resolves the far-depth ceiling.
+5. **λ_var=0.50 works well.** No scale drift observed — s* stays within 0.99–1.04 throughout. Lower λ (=0.50) vs from-scratch standard (=0.85) does not hurt with crop-correct preprocessing.
+6. **Training plateaus at epoch 5–6.** Sparse AR stopped improving; slight regression at epoch 7. Best checkpoint is epoch 6 for sparse evaluation (epoch 5 for dense).
 
 ---
 
@@ -363,4 +396,5 @@ All experiments show: fast initial learning (epoch 1-2), then regression or plat
 |--------|---------|--------|---------|---------------|-------|
 | v15.0: ConvNeXt V2-T + DPT, λ=0.50, bs=12 | ConvNeXt V2-T (28.6M) | ~29.0M | 47K NYU | **0.2035** (ep2) | Best overall. Scale bias 31% |
 | v15.1: DINOv2 ViT-S + DPT, λ=0.50, bs=2, enc LR 1e-5 | DINOv2 ViT-S (22M) | ~22.4M | 47K NYU | 0.2249 (ep1) | Ep2 regression (feature drift). Lower params but worse result |
-| v15.1: DINOv2 ViT-S + DPT, λ=0.85, bs=2, enc LR 5e-6 | DINOv2 ViT-S (22M) | ~22.4M | 47K NYU | *pending* | Corrected parameters |
+| v15.1: DINOv2 ViT-S + DPT, λ=0.50, bs=2, enc LR 5e-6, resize bug | DINOv2 ViT-S (22M) | ~22.4M | 47K NYU | 0.2282 (resize) | Scale bias s*=0.84; preprocessing mismatch. Terminated. |
+| **v15.1.1: DINOv2 ViT-S + DPT, λ=0.50, bs=2, enc LR 5e-6, crop fix** | DINOv2 ViT-S (22M) | ~22.4M | 47K NYU | **0.1150** (ep6) | Scale s*≈1.0. No regression. Best to date. |
