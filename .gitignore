@@ -10,3 +10,5 @@
 .claude/
 fast-feature-fields-main/
 **/__pycache__/
+*checkpoints/
+*demo_outputs/
