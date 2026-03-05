@@ -1,0 +1,4 @@
+v15.1: the first correct version that can run successfully, using ViT-S as encoder, DPT dense-modified as training decoder, and DPT-sparse as inference decoder. (No CUDA optimization, AbsRel: 0.11/0.115 for dense/sparse.)
+
+v15.2: added attention layer for head decoder, replacing s8 & s4 logic in DPT.
+

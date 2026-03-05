@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from models.encoder_vits.vit_s import ViTSEncoder
 from models.encoder_vits.pyramid_neck import ProjectionNeck
 from models.decoder.global_dpt import GlobalDPT
-from models.decoder.local_dpt import LocalDPT
+from models.decoder.local_attn import LocalAttn
 
 from config import H_IMG, W_IMG
 
@@ -16,7 +16,7 @@ class SPD(nn.Module):
         self.encoder = ViTSEncoder(pretrained=pretrained)
         self.neck = ProjectionNeck()
         self.global_dpt = GlobalDPT()
-        self.local_dpt = LocalDPT()
+        self.local_attn = LocalAttn()
 
 
     def forward(self, images: torch.Tensor, query_coords: torch.Tensor = None) -> torch.Tensor:
@@ -27,10 +27,10 @@ class SPD(nn.Module):
         r3 = self.global_dpt(features)
 
         if self.training:
-            depth = self.local_dpt.forward_train(r3, features)
+            depth = self.local_attn.forward_train(r3, features)
 
         else:
-            depth = self.local_dpt.forward_infer(r3, features, query_coords)
+            depth = self.local_attn.forward_infer(r3, features, query_coords)
 
         return depth
 
